@@ -13,6 +13,11 @@
     "lib",
     "runtime",
     "scripts",
+    "install.ps1",
+    "uninstall.ps1",
+    "start.ps1",
+    "stop.ps1",
+    "status.ps1",
     "skills",
     "vendor",
     "README.md",
@@ -33,6 +38,7 @@
   },
   "scripts": {
     "start": "node scripts/control.mjs open",
-    "desktop": "node scripts/control.mjs desktop"
+    "desktop": "node scripts/control.mjs desktop",
+    "test": "node --test test/*.test.mjs"
   }
 }

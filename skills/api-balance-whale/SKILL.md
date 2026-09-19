@@ -1,11 +1,11 @@
 ---
 name: api-balance-whale
-description: 显示跟随 Codex 窗口的小鲸鱼，查询当前 API 余额和已观测用量，管理角色、音效、气泡和自动跟随。适用于用户提到小鲸鱼、当前 API 余额或挂件用量时；普通编码任务不需要此技能。
+description: 显示主显示器桌面悬浮的小鲸鱼，查询当前 API 余额和已观测用量，管理角色、音效、气泡和桌面监视器。适用于用户提到小鲸鱼、当前 API 余额或挂件用量时；普通编码任务不需要此技能。
 ---
 
-使用 `whale_open` 显示本地透明挂件，使用 `whale_balance`、`whale_usage`、`whale_status` 查询余额、账本与状态。挂件随 Codex 桌面应用自动启停，菜单中包含设置、素材和账本。没有独立网页或网页地址；不要打开浏览器面板。`desktop` 参数仅为兼容旧调用，打开操作始终显示跟随窗口的挂件。
+使用 `whale_open` 显示本地透明挂件，使用 `whale_balance`、`whale_usage`、`whale_status` 查询余额、账本与状态。挂件仅在 Codex 桌面应用运行期间自动启停，固定在主显示器的桌面悬浮层；菜单中包含设置、素材和账本。没有独立网页或网页地址；不要打开浏览器面板。`desktop` 参数仅为兼容旧调用，打开操作始终显示桌面悬浮挂件。
 
-当前任务没有加载 MCP 工具时，插件根目录为本文件上两级。用 Node.js 24+ 运行 `scripts/control.mjs` 的 `open`、`balance --refresh`、`usage`、`status` 或 `stop`。自动跟随尚未安装时，按用户意图运行 `scripts/install-follow.ps1`；它注册当前用户的 Windows 计划任务 `Codex API Balance Whale`，由系统服务独立启动监视器。不要直接从 Codex 启动长期监视进程，也不要恢复旧“启动”文件夹快捷方式。需要停用时运行 `scripts/uninstall-follow.ps1`。读查询失败时先检查计划任务及跟随状态，不反复创建进程。
+当前任务没有加载 MCP 工具时，插件根目录为本文件上两级。用 Node.js 24+ 运行 `scripts/control.mjs` 的 `open`、`balance --refresh`、`usage`、`status` 或 `stop`。桌面悬浮尚未安装时，按用户意图运行 `scripts/install-follow.ps1`；它注册当前用户的 Windows 计划任务 `Codex API Balance Whale`，由系统服务独立启动监视器。不要直接从 Codex 启动长期监视进程，也不要恢复旧“启动”文件夹快捷方式。需要停用时运行 `scripts/uninstall-follow.ps1`。读查询失败时先检查计划任务及桌面悬浮状态，不反复创建进程。
 
 计划任务应通过 GUI 子系统的 `WhaleLauncher-…exe` 启动监视器，启动器位于挂件数据目录的 `native` 下。安装脚本负责本机编译与迁移；不要把任务操作改回直接运行 PowerShell，也不要仅靠 `-WindowStyle Hidden` 或 `FreeConsole()` 判断空终端已经消失。验收需检查实际可见窗口。
 
@@ -31,7 +31,7 @@ description: 显示跟随 Codex 窗口的小鲸鱼，查询当前 API 余额和�
 
 Windows 工具窗口标识用于避免透明挂件遮挡 Codex 的绘制。不要恢复每帧强制整窗刷新，也不要启用会吞掉首次点击的 `focusable:false`。翻转保留原版 300 毫秒 ease 动画；命中检测用当前动画矩阵，拖动/缩放/吸附用未压缩的布局尺寸。
 
-窗口位置由独立 Windows 事件线程管理，`nativeFollowing` 为真时不要让低频 IPC 再设置窗口位置。纯移动复用现有画面，不增加整窗刷新。会话扫描在 Worker 中进行；首条 `session_meta.id` 是文件真实身份，后续继承的父元数据不能覆盖它。主轮完成提示按匹配的轮次和稳定 ID 去重；子任务只记录用量，失败、取消和历史回放不发正常完成音。`root_turn_id` 用于把子任务用量归属到主轮；共享密钥区间扣费不能与子任务区间相加。
+桌面模式使用主显示器 `workArea` 作为画布；Codex 进程仅决定挂件生命周期，窗口坐标、移动、最小化或前台状态都不会重新定位它。位置记忆、拖拽与边缘吸附由渲染器处理，避免额外整窗刷新。会话扫描在 Worker 中进行；首条 `session_meta.id` 是文件真实身份，后续继承的父元数据不能覆盖它。主轮完成提示按匹配的轮次和稳定 ID 去重；子任务只记录用量，失败、取消和历史回放不发正常完成音。`root_turn_id` 用于把子任务用量归属到主轮；共享密钥区间扣费不能与子任务区间相加。
 
 导入按真实格式、尺寸/帧数预算验证，不接受仅扩展名或data URL声明。初始角色解码失败回退内置鲸鱼；APNG/GIF命中覆盖后续帧，超预算使用限定到图片矩形的交互回退。用户外链通过 `whaleDesktop.openExternal`，只允许真实点击触发的HTTP(S)，不允许脚本、本地文件或含凭据URL。
 

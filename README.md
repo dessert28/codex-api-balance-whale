@@ -1,9 +1,13 @@
-# API 余额小鲸鱼 · Codex 自动跟随版
+# API 余额小鲸鱼 · Codex 桌面悬浮版
 
 > 本仓库分支 **For-Codex**：把 [DSH 网页版小鲸鱼](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)（`dsh-whale-widget`）改造成 **Codex 桌面应用**的伴随挂件。
 > ⚠️ 与主分支用途不同：**这是 Codex 桌面插件，不能用 `dsh plugin … add` 装进 DSH 网页**；反过来，主分支的 DSH 网页插件也不能在 Codex 里运行。
 
-版本 **0.2.0**（Codex 特化线）。基于 MeteorNOX 的 **dsh-whale-widget 0.3.0-beta** 改编。打开 Codex 桌面应用后，小鲸鱼自动出现；跟随 Codex 窗口移动和缩放，最小化时隐藏，恢复时显示，完全退出 Codex 后关闭。
+## 上游来源与许可证
+
+本项目基于 [MeteorNOX/DeepSeek-Balance-Whale-Widget 的 `For-Codex` 分支](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget/tree/For-Codex) 改造；保留上游 MIT 许可证及作者署名。此衍生版增加 Codex 本地用量读取、5 小时/周配额展示和 Windows 桌面悬浮运行方式，不代表上游作者或 OpenAI 的官方发布。
+
+版本 **0.2.0**（Codex 特化线）。基于 MeteorNOX 的 **dsh-whale-widget 0.3.0-beta** 改编。Codex 正在运行时，小鲸鱼固定显示在主显示器右下角并置顶于普通应用之上；Codex 最小化、移动或切换前台不会影响它，完全退出 Codex 后挂件关闭。
 
 **本版没有独立网页、浏览器面板或本地网页端口。** 界面由透明辅助窗口承载，通过本地进程间通信读取数据。所有菜单、设置、素材和账本都在挂件中操作。它并未修改或注入 Codex 的安装文件。
 
@@ -20,12 +24,16 @@
 ## 使用
 
 - 正常打开 Codex，等待小鲸鱼出现，无需发消息或打开网页。
-- 点击鲸鱼：显示余额或切换气泡；按住拖动：移动位置并记忆；移到边缘：按原设置吸附、翻转。
+- 点击鲸鱼：显示本机 Codex 的 5 小时与周配额使用率、重置倒计时；按住拖动：移动位置并记忆；移到边缘：按原设置吸附、翻转。
 - 鼠标移到鲸鱼上，点击 **☰**：选择角色、大小、音效、气泡、吸附、资源管理、API 设置和用量记录。
 - **Ctrl+Alt+W** 或系统托盘菜单：隐藏/显示。托盘中的“本次退出挂件”只暂停当前 Codex 运行期间的挂件；下次完全退出并重新打开 Codex 时恢复。
 - 新建 Codex 任务后可说“打开小鲸鱼”“查看当前 API 余额”。更新前已打开的任务可能仍持有旧版工具，需新建任务。
 
 **金额统一显示两位小数**，包括余额、今日/历史用量、每轮费用和气泡。后台仍保留原始精度，小额消费不会因显示取整而丢失。音频裁剪时间和 token 整数计数不属于金额。
+
+**Codex 用量监测**：小鲸鱼会只读 `%CODEX_HOME%\sessions` 与 `archived_sessions`，显示今日 token、近 7 天 token、5 小时/周配额使用率与重置倒计时；检测到新一轮时按“模型 + 本轮 token + 两个窗口使用率”弹出气泡。首次启动只建立基线，不会回放历史轮次。缓存写入 `%LOCALAPPDATA%\Codex\api-balance-whale\`，不读取 `auth.json`、不上传会话内容，也不监测 ChatGPT 网页端独立聊天。
+
+PowerShell 入口：`install.ps1`（安装 Electron、注册当前用户登录任务并启动）、`start.ps1`、`stop.ps1`、`status.ps1`、`uninstall.ps1`。手动开发检查可运行 `node scripts/control.mjs codex-usage`。
 
 **界面与币种修复版**：工具窗口避免透明挂件被误判为遮挡 Codex；恢复原版 300 毫秒翻转，移动与按压分别合成。菜单支持美元/人民币显示换算，余额、预警和预算同步使用同一份带日期的汇率。显示中的气泡保留金额和随机语快照；后台刷新后，下次打开或切换内容才更新。慢图片准备期间保留旧画面。技术实现见 [渲染实现](docs/RENDERING.md)。
 
@@ -37,13 +45,13 @@
 
 ## 安装、停用与回滚
 
-另一台电脑需要 Node.js 24+；先运行 `安装桌面组件.cmd`，再运行 `安装自动跟随.cmd`。组件安装需联网获取 Electron 44.3.0。当前原生跟随层面向 Windows x64 与已识别的 WindowsApps Codex 安装布局；其他平台或安装渠道需要适配，不能直接保证可用。逐条步骤、验证清单与回滚命令见 [安装与回滚说明](docs/INSTALL-AND-ROLLBACK-0.2.0.md)。
+另一台电脑需要 Node.js 24+；先运行 `安装桌面组件.cmd`，再运行 `安装自动跟随.cmd`（兼容旧文件名）。组件安装需联网获取 Electron 44.3.0。当前桌面悬浮层面向 Windows x64 与已识别的 WindowsApps Codex 安装布局；其他平台或安装渠道需要适配，不能直接保证可用。逐条步骤、验证清单与回滚命令见 [安装与回滚说明](docs/INSTALL-AND-ROLLBACK-0.2.0.md)。
 
 启动监视器由 Windows 任务计划服务独立启动，以当前用户普通权限运行。Windows 登录后它在后台待命，仅在识别到当前用户的 Codex 桌面应用时启动挂件；不会把 Codex 命令行或任务后台进程当成桌面应用。Codex 退出时只关闭挂件，监视器继续待命。无需管理员权限，不保存登录密码，不调整执行策略或安全软件设置。
 
 监视器不保留命令窗口；正常重启只需退出 Codex。计划任务名为 **Codex API Balance Whale**；异常退出会尝试恢复。停用与回滚入口：
 
-- `停用自动跟随.cmd`：停止监视器与挂件并移除开机启动项，保留设置、素材和账本。
+- `停用自动跟随.cmd`：停止桌面监视器与挂件并移除开机启动项，保留设置、素材和账本。
 - `停止挂件服务.cmd` / `启动桌面挂件.cmd`：仅停止或启动当前挂件进程。
 - `scripts/rollback-0.2.0.ps1 -CheckOnly -Backup <备份目录>`：核验升级前备份；去掉 `-CheckOnly` 即覆盖回插件目录（挂件仍在运行时加 `-Force`，重启后生效）。
 
@@ -65,7 +73,7 @@
 
 本机源码：`%USERPROFILE%\plugins\api-balance-whale`。挂件数据默认位于 `%USERPROFILE%\.codex\whale-widget`（设置 `CODEX_HOME` 或 `WHALE_HOME` 时使用对应目录）。插件缓存更新不会覆盖用户素材与账本。
 
-数据目录包含角色、气泡图片、音频、设置、账本、窗口状态和自动跟随配置。`api-settings.json` 只保存接口设置和密钥环境变量名称，不保存密钥。仅处理 Codex 的用量与任务状态，不上传聊天内容。
+数据目录包含角色、气泡图片、音频、设置、账本、窗口状态和桌面悬浮配置。`api-settings.json` 只保存接口设置和密钥环境变量名称，不保存密钥。仅处理 Codex 的用量与任务状态，不上传聊天内容。
 
 素材限制、保存失败和损坏索引的保护见 [0.2.0 变更说明](docs/CHANGELOG-0.2.0.md) 与 [渲染实现](docs/RENDERING.md)。新导入受真实格式、尺寸/帧数及总量预算约束；已有素材不因超过新限制而被自动删除。
 

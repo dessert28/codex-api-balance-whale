@@ -10,12 +10,12 @@ export async function runningService(dataDir = DATA_HOME) {
 }
 export async function startSupervisor(dataDir = DATA_HOME) {
   const config = readJson(path.join(dataDir, 'follow-config.json'), {});
-  if (config.taskName !== 'Codex API Balance Whale') throw new Error('请运行“安装自动跟随.cmd”以修复独立启动任务');
+  if (config.taskName !== 'Codex API Balance Whale') throw new Error('请运行“安装桌面组件.cmd”以修复桌面悬浮任务');
   const pause = path.join(dataDir, 'pause-until-host-exit.json');
   if (fs.existsSync(pause)) fs.unlinkSync(pause);
   const scheduler = path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'schtasks.exe');
   try { await promisify(execFile)(scheduler, ['/Run', '/TN', config.taskName], { windowsHide: true, timeout: 10000 }); }
-  catch { throw new Error('Windows 自动跟随任务未能启动，请运行“安装自动跟随.cmd”修复'); }
+  catch { throw new Error('Windows 桌面悬浮任务未能启动，请运行“安装桌面组件.cmd”修复'); }
 }
 export async function ensureService({ dataDir = DATA_HOME } = {}) {
   let running = await runningService(dataDir);

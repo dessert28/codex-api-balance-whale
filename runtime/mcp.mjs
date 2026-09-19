@@ -7,7 +7,8 @@ const toolSpecs = [
   { name: 'whale_balance', description: '查询当前 Codex API 服务商的余额、余额口径、币种及今日已观测用量。金额来源于当前 API；不会返回密钥，也不会将 ChatGPT 订阅配额当作 API 余额。', inputSchema: { type: 'object', properties: { refresh: { type: 'boolean', description: '立即从 API 刷新' } }, additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'whale_usage', description: '读取小鲸鱼今日、近七天和历史用量记录。每日合计只覆盖挂件已观测时段，逐模型金额为配置价格估算。', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
   { name: 'whale_status', description: '读取当前服务商、挂件状态和 Codex 会话用量监听状态，不返回 API 密钥。', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
-  { name: 'whale_open', description: '显示跟随 Codex 窗口的 API 余额小鲸鱼。使用本地透明挂件，无网页地址；角色、音效、气泡编辑和资源管理均在挂件中操作。', inputSchema: { type: 'object', properties: { desktop: { type: 'boolean', description: '打开 Windows 透明桌面悬浮挂件' } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false } },
+  { name: 'whale_codex_usage', description: '读取本机 Codex/Work 的今日与近七天 token、五小时/周配额窗口及重置时间；只读会话日志，不读取密钥。', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, annotations: { readOnlyHint: true } },
+  { name: 'whale_open', description: '显示仅在 Codex 运行时存在的 API 余额小鲸鱼。挂件固定为主显示器的透明桌面悬浮层，无网页地址；角色、音效、气泡编辑和资源管理均在挂件中操作。', inputSchema: { type: 'object', properties: { desktop: { type: 'boolean', description: '打开 Windows 透明桌面悬浮挂件' } }, additionalProperties: false }, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false } },
 ];
 
 const send = value => process.stdout.write(JSON.stringify(value) + '\n');
@@ -26,6 +27,7 @@ async function dispatch(message) {
       if (params.name === 'whale_balance') output = await serviceRequest('/dsh-whale/balance.json' + (args.refresh ? '?refresh=1' : ''));
       else if (params.name === 'whale_usage') output = await serviceRequest('/dsh-whale/usage-records.json');
       else if (params.name === 'whale_status') output = await serviceRequest('/api/status');
+      else if (params.name === 'whale_codex_usage') output = await serviceRequest('/dsh-whale/codex-usage.json');
       else if (params.name === 'whale_open') {
         if (args.desktop) output = await launchDesktop();
         else output = await launchDesktop();
@@ -33,7 +35,7 @@ async function dispatch(message) {
       result = { content: [{ type: 'text', text: JSON.stringify(output) }], isError: output.ok === false };
     } else { send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } }); return; }
     send({ jsonrpc: '2.0', id, result });
-  } catch { send({ jsonrpc: '2.0', id, error: { code: -32603, message: '挂件操作失败，请确认 Codex 桌面应用和自动跟随组件已运行' } }); }
+  } catch { send({ jsonrpc: '2.0', id, error: { code: -32603, message: '挂件操作失败，请确认 Codex 桌面应用和桌面悬浮组件已运行' } }); }
 }
 const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 input.on('line', line => {

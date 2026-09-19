@@ -85,8 +85,8 @@ if (!$whaleLauncher -or !(Test-Path -LiteralPath $whaleLauncher -PathType Leaf))
 $whaleAction = New-ScheduledTaskAction -Execute $whaleLauncher -Argument $whaleArguments -WorkingDirectory $DataDir
 $whalePrincipal = New-ScheduledTaskPrincipal -UserId $whaleUser -LogonType Interactive -RunLevel Limited
 $whaleSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval ([TimeSpan]::FromMinutes(1)) -StartWhenAvailable
-if ($NoStartup) { $whaleTask = New-ScheduledTask -Action $whaleAction -Principal $whalePrincipal -Settings $whaleSettings -Description 'Per-user Codex balance companion. No web server.' }
-else { $whaleTrigger = New-ScheduledTaskTrigger -AtLogOn -User $whaleUser; $whaleTask = New-ScheduledTask -Action $whaleAction -Trigger $whaleTrigger -Principal $whalePrincipal -Settings $whaleSettings -Description 'Per-user Codex balance companion. Starts independently of Codex and follows its windows.' }
+if ($NoStartup) { $whaleTask = New-ScheduledTask -Action $whaleAction -Principal $whalePrincipal -Settings $whaleSettings -Description 'Per-user Codex desktop-overlay companion. No web server.' }
+else { $whaleTrigger = New-ScheduledTaskTrigger -AtLogOn -User $whaleUser; $whaleTask = New-ScheduledTask -Action $whaleAction -Trigger $whaleTrigger -Principal $whalePrincipal -Settings $whaleSettings -Description 'Per-user Codex companion. Shows a primary-display desktop overlay only while Codex is running.' }
 # Register and verify before stopping a usable monitor. A failed registration
 # must not turn a working companion into a missing one or write a success receipt.
 try {
@@ -116,7 +116,7 @@ for ($whaleAttempt=0; $whaleAttempt -lt 60; $whaleAttempt++) {
     Start-Sleep -Milliseconds 200
 }
 if ((Get-ScheduledTask -TaskName $whaleTaskName -ErrorAction Stop).State -eq 'Running') { Stop-ScheduledTask -TaskName $whaleTaskName -ErrorAction Stop }
-@{ enabled=$true; pluginRoot=$whaleRoot; electronPath=$whaleElectron; powerShellPath=$whalePowerShell; launcherPath=$whaleLauncher; taskName=$whaleTaskName; mode='follow-codex'; revision='follow-v3'; launchMode='winexe-create-no-window' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $DataDir 'follow-config.json') -Encoding utf8
+@{ enabled=$true; pluginRoot=$whaleRoot; electronPath=$whaleElectron; powerShellPath=$whalePowerShell; launcherPath=$whaleLauncher; taskName=$whaleTaskName; mode='desktop-overlay'; revision='desktop-v1'; launchMode='winexe-create-no-window' } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $DataDir 'follow-config.json') -Encoding utf8
 $whaleStartup = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex API Balance Whale.lnk'
 if (Test-Path -LiteralPath $whaleStartup) {
     $whaleShell = New-Object -ComObject WScript.Shell

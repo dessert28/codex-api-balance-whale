@@ -5,6 +5,7 @@ import { BalanceProvider } from './providers.mjs';
 import { UsageLedger, usageDefaults } from './ledger.mjs';
 import { readJson, writeJson, rounded } from './paths.mjs';
 import { TurnJournal, safeSample, safeTurn, safeUsage } from './turn-journal.mjs';
+import { readUsageSnapshot } from './codex-usage.mjs';
 
 export class WhaleService {
   constructor(options = {}) {
@@ -14,6 +15,7 @@ export class WhaleService {
     this.cache = new Map(); this.inFlight = new Map(); this.turns = new Map(); this.settling = new Set();
     this.balanceSequence = 0; this.latestSamples = new Map(); this.latestQueries = new Map();
     this.lastFile = path.join(this.config.dataDir, 'last-turn.json');
+    this.codexUsageStatePath = path.join(process.env.LOCALAPPDATA || this.config.dataDir, 'Codex', 'api-balance-whale', 'usage-state.json');
     this.usageSettingsFile = path.join(this.config.dataDir, 'usage-settings.json');
     this.activeScope = null;
     this.journal = new TurnJournal(this.config.dataDir);
@@ -110,6 +112,13 @@ export class WhaleService {
     const c = this.config.resolve();
     const scope = this.activeScope?.startsWith(c.accountId + '-') ? this.activeScope : this.scope(c, c.setting.currency);
     return { ...this.ledger.records(scope), currency: scope.slice(-3), settings: this.readUsageSettings() };
+  }
+  codexUsage() {
+    return readUsageSnapshot({ codexHome: this.config.codexHome, statePath: this.codexUsageStatePath }).catch(error => ({
+      generatedAt: new Date().toISOString(), todayTokens: 0, last7dTokens: 0, currentModel: null,
+      windows: { fiveHour: null, weekly: null }, lastTurn: null, stale: true,
+      error: String(error?.message || error).slice(0, 200),
+    }));
   }
   readUsageSettings() {
     const saved = readJson(this.usageSettingsFile, {});

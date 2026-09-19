@@ -7720,6 +7720,10 @@
         hideCostBubble();
         return;
       }
+      if (bubbleScene && bubbleScene.kind === 'alert' && whaleSysItem && whaleSysItem.manualQuota) {
+        showRandomBubbleAfterQuota();
+        return;
+      }
       bubbleNext();
     });
     var body = document.createElement('div');
@@ -11212,8 +11216,7 @@
       positioner.style.transition = '';
       setWidgetCursor(isWhaleHit(e) ? 'grab' : '');
       if (clickAllowed && !drag.moved) {
-        whaleClick();
-        refresh(true);
+        showCodexQuotaOnClick();
         return;
       }
       e = e && Number.isFinite(e.clientX) ? e : { clientX: drag.startX + state.left - drag.origLeft, clientY: drag.startY + state.top - drag.origTop };
@@ -11440,6 +11443,91 @@
       } catch (err) { lastCostPending = false; }
     }
     setInterval(pollLastTurn, 1000);
+    var CODEX_USAGE_URL = '/dsh-whale/codex-usage.json';
+    var codexUsageAligned = false;
+    var codexUsagePending = false;
+    var codexUsageLastTurn = '';
+    var latestCodexUsage = null;
+    var codexUsageClickSequence = 0;
+    try { codexUsageLastTurn = localStorage.getItem('dshw-codex-last-turn') || ''; } catch (err) {}
+    function quotaBubbleModules(snapshot) {
+      try {
+        if (window.WhaleQuotaBubble && typeof window.WhaleQuotaBubble.quotaBubbleModules === 'function') {
+          return window.WhaleQuotaBubble.quotaBubbleModules(snapshot);
+        }
+      } catch (err) {}
+      return [
+        { type: 'text', text: '5 小时：暂无数据', size: 6, bold: true },
+        { type: 'text', text: '本周：暂无数据', size: 6, bold: true }
+      ];
+    }
+    function showCodexQuotaSnapshot(snapshot) {
+      hideBubble();
+      whaleSysPush({ kind: 'alert', rank: 1, ttlMs: 10000, manualQuota: true, mods: quotaBubbleModules(snapshot) });
+    }
+    function showRandomBubbleAfterQuota() {
+      hideBubble();
+      if (!bubbleOn) return;
+      bubbleRoundOn = true;
+      bubbleSeqIdx = 1;
+      bubbleShowSeqNext();
+    }
+    function showCodexQuotaOnClick() {
+      var click = ++codexUsageClickSequence;
+      showCodexQuotaSnapshot(latestCodexUsage);
+      var ctrl = null;
+      var timer = null;
+      try {
+        ctrl = new AbortController();
+        timer = setTimeout(function () { try { ctrl.abort(); } catch (err) {} }, 5000);
+      } catch (err) {}
+      fetch(CODEX_USAGE_URL, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined }).then(function (r) {
+        return r.json();
+      }).then(function (d) {
+        if (click !== codexUsageClickSequence) return;
+        if (d && d.ok) {
+          latestCodexUsage = d;
+          showCodexQuotaSnapshot(d);
+        } else if (latestCodexUsage) {
+          showCodexQuotaSnapshot({ ...latestCodexUsage, stale: true });
+        }
+      }).catch(function () {
+        if (click === codexUsageClickSequence && latestCodexUsage) showCodexQuotaSnapshot({ ...latestCodexUsage, stale: true });
+      }).finally(function () { if (timer) clearTimeout(timer); });
+    }
+    function pollCodexUsage() {
+      if (codexUsagePending) return;
+      codexUsagePending = true;
+      try {
+        fetch(CODEX_USAGE_URL, { cache: 'no-store' }).then(function (r) {
+          return r.json();
+        }).then(function (d) {
+          if (!d || !d.ok) return;
+          latestCodexUsage = d;
+          var turn = d.lastTurn || {};
+          var turnKey = turn.timestamp ? String(turn.timestamp) : '';
+          if (!codexUsageAligned) {
+            codexUsageAligned = true;
+            if (turnKey) codexUsageLastTurn = turnKey;
+            try { localStorage.setItem('dshw-codex-last-turn', codexUsageLastTurn); } catch (err) {}
+            return;
+          }
+          if (!turnKey || turnKey === codexUsageLastTurn || typeof turn.deltaTokens !== 'number' || turn.deltaTokens <= 0) return;
+          codexUsageLastTurn = turnKey;
+          try { localStorage.setItem('dshw-codex-last-turn', codexUsageLastTurn); } catch (err) {}
+          var five = d.windows && d.windows.fiveHour;
+          var week = d.windows && d.windows.weekly;
+          var model = turn.model || d.currentModel || 'Codex';
+          var quota = quotaBubbleModules({ windows: { fiveHour: five, weekly: week } });
+          whaleSysPush({ kind: 'alert', rank: 2, mods: [
+            { type: 'text', text: model + ' 本轮 +' + Math.round(turn.deltaTokens) + ' tokens', size: 7, bold: true },
+            { type: 'text', text: quota.map(function (item) { return item.text; }).join('｜'), size: 5 }
+          ] });
+        }).catch(function () {}).finally(function () { codexUsagePending = false; });
+      } catch (err) { codexUsagePending = false; }
+    }
+    pollCodexUsage();
+    setInterval(pollCodexUsage, 1500);
   }
   if (dshwEnabled) {
     try {
