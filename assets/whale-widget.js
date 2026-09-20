@@ -11442,7 +11442,7 @@
         }).catch(function () {}).finally(function () { lastCostPending = false; });
       } catch (err) { lastCostPending = false; }
     }
-    setInterval(pollLastTurn, 1000);
+    setInterval(pollLastTurn, 3000);
     var CODEX_USAGE_URL = '/dsh-whale/codex-usage.json';
     var codexUsageAligned = false;
     var codexUsagePending = false;
@@ -11527,7 +11527,7 @@
       } catch (err) { codexUsagePending = false; }
     }
     pollCodexUsage();
-    setInterval(pollCodexUsage, 1500);
+    setInterval(pollCodexUsage, 5000);
   }
   if (dshwEnabled) {
     try {

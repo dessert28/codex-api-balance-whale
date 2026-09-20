@@ -128,7 +128,7 @@ else {
     // native occlusion calculation even while its opaque pixels accept clicks.
     // Keep normal activation: Chromium's non-client handler consumes the first
     // mouse down (MA_NOACTIVATEANDEAT) when CanActivate/focusable is false.
-    window = new BrowserWindow({ ...area, type: 'toolbar', transparent: true, frame: false, thickFrame: false, resizable: false, maximizable: false, fullscreenable: false, backgroundColor: '#00000000', hasShadow: false, skipTaskbar: true, show: false, title: 'API 余额小鲸鱼', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required', additionalArguments: fixture ? ['--whale-render-test'] : [] } });
+    window = new BrowserWindow({ ...area, type: 'toolbar', transparent: true, frame: false, thickFrame: false, resizable: false, maximizable: false, fullscreenable: false, backgroundColor: '#00000000', hasShadow: false, skipTaskbar: true, show: false, title: 'API 余额小鲸鱼', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, autoplayPolicy: 'no-user-gesture-required', additionalArguments: fixture ? ['--whale-render-test'] : [] } });
     window.setAlwaysOnTop(true, 'floating');
     markStartup('windowCreated');
     window.once('ready-to-show', () => markStartup('frameReady'));
@@ -175,7 +175,7 @@ else {
     ipcMain.on('whale-keyboard-focus', (event, editing) => {
       if (event.sender === window.webContents && typeof editing === 'boolean') setKeyboardFocus(editing);
     });
-    const cursorPoll = setInterval(sendCursor, 50);
+    const cursorPoll = setInterval(sendCursor, 120);
     visibilityWatchdog = setInterval(assertVisibility, 1000);
     if (visibilityWatchdog.unref) visibilityWatchdog.unref();
     app.once('will-quit', () => { clearInterval(cursorPoll); clearInterval(visibilityWatchdog); visibilityWatchdog = null; });

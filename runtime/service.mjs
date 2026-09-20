@@ -6,6 +6,7 @@ import { UsageLedger, usageDefaults } from './ledger.mjs';
 import { readJson, writeJson, rounded } from './paths.mjs';
 import { TurnJournal, safeSample, safeTurn, safeUsage } from './turn-journal.mjs';
 import { readUsageSnapshot } from './codex-usage.mjs';
+import { createCachedAsyncReader } from './usage-cache.mjs';
 
 export class WhaleService {
   constructor(options = {}) {
@@ -19,6 +20,10 @@ export class WhaleService {
     this.usageSettingsFile = path.join(this.config.dataDir, 'usage-settings.json');
     this.activeScope = null;
     this.journal = new TurnJournal(this.config.dataDir);
+    this.codexUsageReader = createCachedAsyncReader(
+      options.readCodexUsage || (input => readUsageSnapshot(input)),
+      { ttlMs: options.codexUsageCacheMs ?? 5000 },
+    );
     this.jobs = new Set(); this.noticeTimers = new Map(); this.latestStarts = new Map(); this.pendingCosts = new Map();
     this.noticeDelayMs = options.noticeDelayMs ?? 2500; this.pendingCostMs = options.pendingCostMs ?? 30000;
     this.closed = false; this.restored = false; this.recoveryActive = new Set();
@@ -114,7 +119,7 @@ export class WhaleService {
     return { ...this.ledger.records(scope), currency: scope.slice(-3), settings: this.readUsageSettings() };
   }
   codexUsage() {
-    return readUsageSnapshot({ codexHome: this.config.codexHome, statePath: this.codexUsageStatePath }).catch(error => ({
+    return this.codexUsageReader({ codexHome: this.config.codexHome, statePath: this.codexUsageStatePath }).catch(error => ({
       generatedAt: new Date().toISOString(), todayTokens: 0, last7dTokens: 0, currentModel: null,
       windows: { fiveHour: null, weekly: null }, lastTurn: null, stale: true,
       error: String(error?.message || error).slice(0, 200),
