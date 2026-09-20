@@ -20,7 +20,8 @@ $whaleChild = $null; $whaleOutput = $null; $whaleErrors = $null
 $whaleLastLaunch = [DateTime]::MinValue; $whaleHeartbeat = [DateTime]::MinValue; $whaleLastMessage = ''
 $whaleSequence = 0
 $whaleStateFile = Join-Path $DataDir 'supervisor-state.json'
-$whaleParentPid = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID)).ParentProcessId
+$whaleParentPid = 0
+try { $whaleParentPid = (Get-CimInstance Win32_Process -Filter ('ProcessId=' + $PID) -ErrorAction Stop).ParentProcessId } catch { }
 @{ pid=$PID; parentPid=$whaleParentPid; consoleAttached=[WhaleWindows]::HasConsole(); startedAt=[DateTime]::UtcNow.ToString('o'); host='PowerShell' } | ConvertTo-Json | Set-Content -LiteralPath $whaleStateFile -Encoding utf8
 function Read-WhaleJson([string]$File) { if (Test-Path -LiteralPath $File) { Get-Content -LiteralPath $File -Raw | ConvertFrom-Json } else { @{} } }
 function Send-WhaleHost($State) {

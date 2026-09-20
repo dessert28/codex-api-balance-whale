@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const { desktopWorkArea, shouldShowDesktopWidget } = require('../desktop/desktop-mode.cjs');
+const { desktopWorkArea, desktopWindowBounds, shouldShowDesktopWidget } = require('../desktop/desktop-mode.cjs');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('desktop widget remains visible while Codex is alive even when its window is minimized', () => {
@@ -18,6 +18,13 @@ test('desktop widget remains visible while Codex is alive even when its window i
 test('desktop widget uses the primary display work area instead of Codex bounds', () => {
   const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
   assert.deepEqual(desktopWorkArea({ getPrimaryDisplay: () => ({ workArea }) }), workArea);
+});
+
+test('desktop widget starts in a compact bottom-right window', () => {
+  const workArea = { x: 100, y: 40, width: 1920, height: 1040 };
+  assert.deepEqual(desktopWindowBounds({ getPrimaryDisplay: () => ({ workArea }) }), {
+    x: 1300, y: 360, width: 720, height: 720,
+  });
 });
 
 test('desktop mode disables native attachment and enables floating overlay behavior', async () => {
