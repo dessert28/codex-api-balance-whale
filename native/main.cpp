@@ -2,6 +2,7 @@
 #include "core/supervisor.hpp"
 #include "core/usage_snapshot.hpp"
 #include "overlay/desktop_overlay.hpp"
+#include "settings/quote_editor.hpp"
 #include "settings/settings_window.hpp"
 
 #include <shellapi.h>
@@ -319,6 +320,13 @@ int RunOverlay(bool settings = false) {
     return whale::RunDesktopOverlay(options);
 }
 
+int RunQuoteEditor() {
+    if (const auto console = GetConsoleWindow()) ShowWindow(console, SW_HIDE);
+    whale::QuoteEditorPaths paths;
+    paths.configPath = OverlayConfigPath();
+    return whale::RunQuoteEditor(paths);
+}
+
 }
 
 int wmain(int argc, wchar_t** argv) {
@@ -327,5 +335,6 @@ int wmain(int argc, wchar_t** argv) {
     if (mode == L"--mcp") { RunMcp(); return 0; }
     if (mode == L"--supervisor") return RunSupervisor();
     if (mode == L"--settings") return RunOverlay(true);
+    if (mode == L"--quotes") return RunQuoteEditor();
     return RunOverlay(false);
 }

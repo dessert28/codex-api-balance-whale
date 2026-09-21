@@ -22,12 +22,16 @@ public static class Win {
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
-  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  // Pinned to the Unicode entry point: the ANSI thunk converts string pointers
+  // (WM_SETTEXT) from ANSI, so a UTF-16 payload stops at the first NUL and
+  // "5|QA EDITOR LINE" arrives as "5".
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
   [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
   [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr d, int x, int y, int w, int h, IntPtr s, int sx, int sy, int rop);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
 }
@@ -126,6 +130,21 @@ function Write-Config([string]$dir, [string]$json) {
 
 # ---------------------------------------------------------------- stage 1
 Stop-Overlay
+# Stage 1 runs against a private scratch environment seeded with one fake
+# session. With the real %CODEX_HOME% a live Codex turn can drop a notice bubble
+# in the middle of the 10 s quota-card measurement, which then reads as "the
+# card never closed".
+$stage1Dir = Join-Path $artifacts 'stage1'
+Remove-Item $stage1Dir -Recurse -Force -ErrorAction SilentlyContinue
+Write-Config $stage1Dir '{"size":440,"sound":1,"soundSet":0,"hideSeconds":5,"turnSeconds":6,"autoClose":1,"turnNotice":1}'
+$env:LOCALAPPDATA = $stage1Dir
+$env:CODEX_HOME = Join-Path $stage1Dir 'codex'
+$seedDir = Join-Path $env:CODEX_HOME 'sessions\2026\09\21'
+New-Item -ItemType Directory -Force -Path $seedDir | Out-Null
+Set-Content -Encoding ASCII -Path (Join-Path $seedDir 'rollout.jsonl') -Value @(
+  '{"type":"session_meta","timestamp":"2026-09-21T01:00:00Z","payload":{"model":"gpt-5.6-terra"}}',
+  '{"type":"event_msg","timestamp":"2026-09-21T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20}},"rate_limits":{"primary":{"used_percent":13,"resets_at":1789707891},"secondary":{"used_percent":55,"resets_at":1789805325}}}}'
+)
 $hwnd = Start-Overlay
 $client = New-Object Win+RECT
 [void][Win]::GetClientRect($hwnd, [ref]$client)
@@ -220,7 +239,7 @@ $dragX = $whaleX - 40
 Start-Sleep -Milliseconds 80
 [void][Win]::PostMessage($hwnd, 0x0202, [IntPtr]0, [IntPtr](($whaleX -shl 16) -bor ($dragX -band 0xFFFF)))
 Start-Sleep -Milliseconds 500
-$config = (Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Codex\api-balance-whale\overlay.json') -Raw).Trim()
+$config = (Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Codex\api-balance-whale\overlay.json') -Raw -Encoding UTF8).Trim()
 Check 'config keeps new tuning keys' ($config -match 'turnSeconds' -and $config -match 'autoClose' -and $config -match 'turnNotice') $config
 
 # ---------------------------------------------------------------- stage 2
@@ -295,6 +314,101 @@ Check 'turn notice shown when enabled' ($on.Peak -gt $VISIBLE) ("baseline=$($on.
 Check 'turn notice arrives within 7 s' ($null -ne $on.Latency -and $on.Latency -le 7) ("latency=$($on.Latency)s")
 $off = Invoke-TurnNotice 0 'notice-off'
 Check 'turn notice suppressed when disabled' ($off.Peak -le ($off.Baseline + 200)) ("baseline=$($off.Baseline) peak=$($off.Peak)")
+
+# ---------------------------------------------------------------- stage 4
+# The random line set is editable and weighted, and the tray editor writes it
+# back into overlay.json (which the overlay reloads right away).
+$quoteDir = Join-Path $artifacts 'quotes'
+Remove-Item $quoteDir -Recurse -Force -ErrorAction SilentlyContinue
+Write-Config $quoteDir '{"size":440,"sound":0,"soundSet":0,"hideSeconds":30,"turnSeconds":6,"autoClose":1,"turnNotice":0,"quotes":[{"t":"QA QUOTE ALPHA","w":1},{"t":"QA QUOTE BETA","w":9}]}'
+$configPath = Join-Path $quoteDir 'Codex\api-balance-whale\overlay.json'
+$env:LOCALAPPDATA = $quoteDir
+$env:CODEX_HOME = Join-Path $quoteDir 'codex'
+New-Item -ItemType Directory -Force -Path $env:CODEX_HOME | Out-Null
+$quoteHwnd = Start-Overlay
+Start-Sleep -Seconds 2
+Click-Client $quoteHwnd $whaleX $whaleX
+Start-Sleep -Milliseconds 700
+Click-Client $quoteHwnd $bubbleX $bubbleY
+Start-Sleep -Milliseconds 1200
+$quoteShot = Shot $quoteHwnd
+$quotePixels = BubblePixels $quoteShot; Save-Shot $quoteShot 'shot-quotes.png'; $quoteShot.Bitmap.Dispose()
+$quoteLog = Get-Content -LiteralPath $log -Raw
+$pick = ([regex]'quote pick=\d+ of 2 weight=\d+ text=QA QUOTE \w+').Match($quoteLog)
+Check 'config quote set drives the line bubble' ($pick.Success -and $quotePixels -gt $VISIBLE) ("pixels=$quotePixels log=" + $pick.Value)
+
+# A drag rewrites overlay.json; the quote set has to survive that write path.
+$lp = [IntPtr](($whaleX -shl 16) -bor $whaleX)
+[void][Win]::PostMessage($quoteHwnd, 0x0201, [IntPtr]1, $lp)
+Start-Sleep -Milliseconds 80
+$dragX = $whaleX - 40
+[void][Win]::PostMessage($quoteHwnd, 0x0200, [IntPtr]1, [IntPtr](($whaleX -shl 16) -bor ($dragX -band 0xFFFF)))
+Start-Sleep -Milliseconds 80
+[void][Win]::PostMessage($quoteHwnd, 0x0202, [IntPtr]0, [IntPtr](($whaleX -shl 16) -bor ($dragX -band 0xFFFF)))
+Start-Sleep -Milliseconds 600
+$kept = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8).Trim()
+Check 'overlay rewrite keeps the quote set' ($kept -match '"quotes":\[\{"t":"QA QUOTE ALPHA","w":1\},\{"t":"QA QUOTE BETA","w":9\}\]') $kept
+
+# Opening the editor and saving straight away has to round-trip the configured
+# set; that is what proves the edit control really shows the current weighted
+# lines rather than starting blank.
+$rt = Start-Process -FilePath $exe -ArgumentList '--quotes' -WorkingDirectory $root -PassThru
+$rtWnd = [IntPtr]::Zero
+for ($i = 0; $i -lt 40; $i++) {
+  Start-Sleep -Milliseconds 250
+  $rt.Refresh()
+  if ($rt.HasExited) { break }
+  if ($rt.MainWindowHandle -ne 0) { $rtWnd = $rt.MainWindowHandle; break }
+}
+if ($rtWnd -ne [IntPtr]::Zero) { [void][Win]::SendMessage($rtWnd, 0x0111, [IntPtr]2105, [IntPtr]::Zero) }
+Start-Sleep -Milliseconds 900
+$rt.Refresh()
+if (-not $rt.HasExited) { $rt.Kill() }
+$unchanged = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8).Trim()
+Check 'editor loads the configured set' ($unchanged -match '"quotes":\[\{"t":"QA QUOTE ALPHA","w":1\},\{"t":"QA QUOTE BETA","w":9\}\]') $unchanged
+
+# Tray "随机语句…" opens the editor; the edit control is driven directly so the
+# save path (weighted parse, config rewrite, overlay reload) is covered.
+# No -WindowStyle Hidden here: STARTUPINFO.wShowWindow = SW_HIDE would override the
+# editor's first ShowWindow(SW_SHOW), so the window never becomes visible and the
+# process reports MainWindowHandle = 0.
+$editor = Start-Process -FilePath $exe -ArgumentList '--quotes' -WorkingDirectory $root -PassThru
+$editorWnd = [IntPtr]::Zero
+for ($i = 0; $i -lt 40; $i++) {
+  Start-Sleep -Milliseconds 250
+  $editor.Refresh()
+  if ($editor.HasExited) { break }
+  # FindWindow does not see this tool window on this machine (the same quirk as
+  # the overlay window), so the process handle is used instead.
+  if ($editor.MainWindowHandle -ne 0) { $editorWnd = $editor.MainWindowHandle; break }
+}
+Check 'quote editor opens' ($editorWnd -ne [IntPtr]::Zero) "hwnd=$editorWnd"
+if ($editorWnd -ne [IntPtr]::Zero) {
+  $rect = New-Object Win+RECT
+  [void][Win]::GetWindowRect($editorWnd, [ref]$rect)
+  $editorShot = Shot $editorWnd; Save-Shot $editorShot 'shot-quote-editor.png'; $editorShot.Bitmap.Dispose()
+  Check 'quote editor is laid out' (($rect.Right - $rect.Left) -ge 440 -and ($rect.Bottom - $rect.Top) -ge 340) "size=$(($rect.Right - $rect.Left))x$(($rect.Bottom - $rect.Top))"
+  $edit = [Win]::FindWindowEx($editorWnd, [IntPtr]::Zero, 'Edit', $null)
+  Check 'quote editor shows the current set' ($edit -ne [IntPtr]::Zero) "edit=$edit"
+  if ($edit -ne [IntPtr]::Zero) {
+    $text = [System.Runtime.InteropServices.Marshal]::StringToHGlobalUni("5|QA EDITOR LINE`r`n1|QA EDITOR SECOND")
+    [void][Win]::SendMessage($edit, 0x000C, [IntPtr]::Zero, $text)
+    [System.Runtime.InteropServices.Marshal]::FreeHGlobal($text)
+    [void][Win]::SendMessage($editorWnd, 0x0111, [IntPtr]2105, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 900
+    $saved = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8).Trim()
+    Check 'editor saves a weighted set' ($saved -match '"t":"QA EDITOR LINE","w":5' -and $saved -match '"t":"QA EDITOR SECOND","w":1') $saved
+    Check 'editor closes after saving' ($null -eq (Get-Process -Id $editor.Id -ErrorAction SilentlyContinue)) "pid=$($editor.Id)"
+    Click-Client $quoteHwnd $whaleX $whaleX
+    Start-Sleep -Milliseconds 700
+    Click-Client $quoteHwnd $bubbleX $bubbleY
+    Start-Sleep -Milliseconds 1200
+    $reloaded = ([regex]'text=QA EDITOR \w+').Match((Get-Content -LiteralPath $log -Raw))
+    Check 'overlay reloads the edited set' $reloaded.Success $reloaded.Value
+  }
+}
+Stop-Overlay
+Remove-Item Env:\LOCALAPPDATA, Env:\CODEX_HOME -ErrorAction SilentlyContinue
 
 ""
 "failures = $failures"

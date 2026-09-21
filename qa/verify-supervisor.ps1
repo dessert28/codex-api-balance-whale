@@ -10,9 +10,14 @@ $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class K {
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
 }
 "@
 $root = Split-Path -Parent $PSScriptRoot
@@ -51,11 +56,28 @@ function Wait-Overlay {
   return [IntPtr]::Zero
 }
 
-# Opens the tray menu on demand and picks an entry with the keyboard.
-function Invoke-TrayItem([IntPtr]$hwnd, [int]$downs) {
+# Opens the tray menu on demand and picks an entry with the keyboard. The entry
+# is addressed by label, not by a fixed number of Down presses: adding an item to
+# the menu in desktop_overlay.cpp used to shift every hardcoded index.
+function Invoke-TrayLabel([IntPtr]$hwnd, [string]$label) {
   [void][K]::PostMessage($hwnd, 0x8000 + 2, [IntPtr]$hwnd, [IntPtr]0x0205)
   Start-Sleep -Milliseconds 900
-  for ($i = 0; $i -lt $downs; $i++) {
+  $menuWnd = [K]::FindWindow('#32768', $null)
+  if ($menuWnd -eq [IntPtr]::Zero) { throw 'tray menu did not open' }
+  $menu = [K]::SendMessage($menuWnd, 0x01E1, [IntPtr]::Zero, [IntPtr]::Zero)
+  $labels = @()
+  for ($i = 0; $i -lt [K]::GetMenuItemCount($menu); $i++) {
+    $sb = New-Object System.Text.StringBuilder 160
+    [void][K]::GetMenuString($menu, [uint32]$i, $sb, 160, 0x400)
+    # Separators have no text and the keyboard skips them.
+    if ($sb.Length -gt 0) { $labels += $sb.ToString() }
+  }
+  $index = -1
+  for ($i = 0; $i -lt $labels.Count; $i++) {
+    if ($labels[$i] -like "$label*") { $index = $i; break }
+  }
+  if ($index -lt 0) { throw "tray item missing: $label (have: $($labels -join ' | '))" }
+  for ($i = 0; $i -le $index; $i++) {
     [K]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero)
     [K]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 120
@@ -71,7 +93,7 @@ Start-Supervisor
 $hwnd = Wait-Overlay
 Check 'supervisor launches overlay while Codex runs' ($hwnd -ne [IntPtr]::Zero) "hwnd=$hwnd"
 if ($hwnd -ne [IntPtr]::Zero) {
-  Invoke-TrayItem $hwnd 11
+  Invoke-TrayLabel $hwnd '完全退出'
   $overlay = Get-Whale '--overlay'
   $supervisor = Get-Whale '--supervisor'
   Check 'full exit closes the overlay' (-not $overlay) ("overlay=" + ($overlay | Measure-Object).Count)
@@ -84,7 +106,7 @@ Start-Supervisor
 $hwnd = Wait-Overlay
 Check 'overlay returns for the second scenario' ($hwnd -ne [IntPtr]::Zero) "hwnd=$hwnd"
 if ($hwnd -ne [IntPtr]::Zero) {
-  Invoke-TrayItem $hwnd 10
+  Invoke-TrayLabel $hwnd '本次退出挂件'
   $overlay = Get-Whale '--overlay'
   $supervisor = Get-Whale '--supervisor'
   Check 'session exit closes the overlay' (-not $overlay) ("overlay=" + ($overlay | Measure-Object).Count)

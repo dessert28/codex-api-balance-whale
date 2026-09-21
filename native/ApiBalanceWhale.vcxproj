@@ -70,6 +70,8 @@
     <ClInclude Include="core\bubble_policy.hpp" />
     <ClInclude Include="core\supervisor.hpp" />
     <ClInclude Include="core\session_watcher.hpp" />
+    <ClInclude Include="core\quotes.hpp" />
+    <ClInclude Include="settings\quote_editor.hpp" />
     <ClInclude Include="overlay\desktop_overlay.hpp" />
     <ClInclude Include="settings\settings_window.hpp" />
   </ItemGroup>
@@ -83,6 +85,8 @@
     <ClCompile Include="core\usage_snapshot.cpp" />
     <ClCompile Include="core\usage_monitor.cpp" />
     <ClCompile Include="core\session_watcher.cpp" />
+    <ClCompile Include="core\quotes.cpp" />
+    <ClCompile Include="settings\quote_editor.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="CopyWhaleAssets" AfterTargets="Build">

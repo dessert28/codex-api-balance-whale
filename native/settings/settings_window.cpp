@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "settings_window.hpp"
 #include "../core/autostart.hpp"
+#include "../core/quotes.hpp"
 #include "../overlay/desktop_overlay.hpp"
 
 #include <gdiplus.h>
@@ -68,6 +69,9 @@ struct SettingsState {
     int autoClose{1};
     int x{INT_MIN};
     int y{INT_MIN};
+    // Raw `quotes` array kept verbatim: the quote editor owns its shape, and this
+    // window must not wipe it when it rewrites the shared config file.
+    std::string quotes;
 };
 
 std::string ReadAll(const std::filesystem::path& path) {
@@ -102,6 +106,9 @@ SettingsState LoadState(const std::filesystem::path& configPath) {
     state.autoClose = ReadInt(text, "autoClose", state.autoClose);
     state.x = ReadInt(text, "x", INT_MIN);
     state.y = ReadInt(text, "y", INT_MIN);
+    std::size_t quotesBegin = 0;
+    std::size_t quotesEnd = 0;
+    if (FindQuoteSpan(text, quotesBegin, quotesEnd)) state.quotes = text.substr(quotesBegin, quotesEnd - quotesBegin);
     return state;
 }
 
@@ -124,6 +131,7 @@ bool SaveState(const std::filesystem::path& configPath, const SettingsState& sta
     if (keepPosition && state.x != INT_MIN && state.y != INT_MIN) {
         output << ",\"x\":" << state.x << ",\"y\":" << state.y;
     }
+    if (!state.quotes.empty()) output << ",\"quotes\":" << state.quotes;
     output << "}\n";
     return true;
 }

@@ -3,6 +3,7 @@
 #include "../core/audio.hpp"
 #include "../core/autostart.hpp"
 #include "../core/bubble_policy.hpp"
+#include "../core/quotes.hpp"
 #include "../core/session_watcher.hpp"
 #include "../core/supervisor.hpp"
 
@@ -18,6 +19,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <random>
 #include <regex>
@@ -63,6 +65,7 @@ constexpr UINT kTraySessionExit = 1008;
 constexpr UINT kTrayTurnNotice = 1009;
 constexpr UINT kTrayAutoClose = 1010;
 constexpr UINT kTrayHotkeyHint = 1011;
+constexpr UINT kTrayQuotes = 1012;
 constexpr int kSizePresets[] = {300, 440, 580};
 
 struct HotkeyChoice {
@@ -111,6 +114,15 @@ std::wstring Utf8ToWide(const std::string& value) {
     std::wstring wide(static_cast<std::size_t>(length), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), wide.data(), length);
     return wide;
+}
+
+std::string WideToUtf8(const std::wstring& value) {
+    if (value.empty()) return {};
+    const int length = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    if (length <= 0) return {};
+    std::string narrow(static_cast<std::size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), static_cast<int>(value.size()), narrow.data(), length, nullptr, nullptr);
+    return narrow;
 }
 
 std::wstring FormatCountdown(std::int64_t resetsAt) {
@@ -165,9 +177,11 @@ std::filesystem::path EnvironmentPath(const wchar_t* name, const std::filesystem
 void DebugLog(const std::wstring& message) {
     const auto target = _wgetenv(L"WHALE_OVERLAY_DEBUG");
     if (!target || !*target) return;
-    std::wofstream output(target, std::ios::app);
+    // UTF-8, so Chinese text (quote lines, tray labels) stays readable in the log
+    // instead of turning into question marks.
+    std::ofstream output(std::filesystem::path(target), std::ios::app | std::ios::binary);
     if (!output) return;
-    output << message << L"\n";
+    output << WideToUtf8(message) << '\n';
 }
 
 int ReadJsonInt(const std::string& text, const char* key, int fallback) {
@@ -374,6 +388,7 @@ private:
         m_policy.turnSeconds = std::clamp(ReadJsonInt(text, "turnSeconds", m_policy.turnSeconds), 3, 120);
         m_policy.autoClose = ReadJsonInt(text, "autoClose", m_policy.autoClose ? 1 : 0) != 0;
         m_turnNotice = ReadJsonInt(text, "turnNotice", m_turnNotice ? 1 : 0) != 0;
+        if (const auto quotes = ParseQuoteJson(text); !quotes.empty()) m_quotes = quotes;
         m_soundEnabled = m_options.soundEnabled;
         m_soundSet = m_options.soundSet;
         const int x = ReadJsonInt(text, "x", INT_MIN);
@@ -401,7 +416,8 @@ private:
                << ",\"hideSeconds\":" << m_policy.hideSeconds
                << ",\"turnSeconds\":" << m_policy.turnSeconds
                << ",\"autoClose\":" << (m_policy.autoClose ? 1 : 0)
-               << ",\"turnNotice\":" << (m_turnNotice ? 1 : 0) << "}\n";
+               << ",\"turnNotice\":" << (m_turnNotice ? 1 : 0)
+               << ",\"quotes\":" << QuoteJson(m_quotes) << "}\n";
     }
 
     void Render() {
@@ -634,22 +650,13 @@ private:
     }
 
     void ShowQuote() {
-        static const std::array<const wchar_t*, 10> quotes{
-            L"今天也要好好休息呀～",
-            L"鲸鱼正在帮你看配额～",
-            L"慢一点，思路会更清楚～",
-            L"本轮完成，继续保持～",
-            L"喝口水，再写一段～",
-            L"配额在这里，安心工作吧～",
-            L"写代码也要记得眨眼哦～",
-            L"再忙也别忘记吃饭～",
-            L"今天的你依旧很可靠～",
-            L"深呼吸，然后继续～"};
-        static std::size_t index = 0;
-        static std::mt19937 generator{std::random_device{}()};
-        std::uniform_int_distribution<std::size_t> pick(0, quotes.size() - 1);
-        index = pick(generator);
-        SetLines({quotes[index]}, {false});
+        if (m_quotes.empty()) m_quotes = DefaultQuotes();
+        m_quoteIndex = PickQuote(m_quotes, m_quoteIndex, m_generator);
+        const auto& line = m_quotes[m_quoteIndex];
+        std::wostringstream log;
+        log << L"quote pick=" << m_quoteIndex << L" of " << m_quotes.size() << L" weight=" << line.weight << L" text=" << line.text;
+        DebugLog(log.str());
+        SetLines({line.text}, {false});
         m_bubble = Bubble::Quote;
         ArmHideTimer(BubbleKind::Quote);
         Render();
@@ -778,6 +785,7 @@ private:
         AppendMenuW(menu, MF_STRING | (m_policy.autoClose ? MF_CHECKED : 0), kTrayAutoClose, L"气泡自动收起");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTraySettings, L"设置…");
+        AppendMenuW(menu, MF_STRING, kTrayQuotes, L"随机语句…");
         AppendMenuW(menu, MF_STRING, kTraySessionExit, L"本次退出挂件（下次启动 Codex 恢复）");
         AppendMenuW(menu, MF_STRING, kTrayExit, L"完全退出");
 
@@ -824,6 +832,9 @@ private:
         case kTraySettings:
             LaunchSettings();
             break;
+        case kTrayQuotes:
+            LaunchMode(L"--quotes");
+            break;
         case kTrayTurnNotice:
             m_turnNotice = !m_turnNotice;
             SaveConfig();
@@ -847,10 +858,10 @@ private:
         }
     }
 
-    void LaunchSettings() const {
+    void LaunchMode(const wchar_t* mode) const {
         const auto exe = whale::CurrentExecutablePath();
         if (exe.empty()) return;
-        std::wstring command = L"\"" + exe.wstring() + L"\" --settings";
+        std::wstring command = L"\"" + exe.wstring() + L"\" " + mode;
         STARTUPINFOW startup{sizeof(startup)};
         PROCESS_INFORMATION child{};
         if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
@@ -860,6 +871,8 @@ private:
         CloseHandle(child.hThread);
         CloseHandle(child.hProcess);
     }
+
+    void LaunchSettings() const { LaunchMode(L"--settings"); }
 
     // Wakes the supervisor when the tray asks for a full exit; the supervisor
     // owns the event, so a manually started overlay simply finds nothing.
@@ -1107,6 +1120,9 @@ private:
     std::vector<float> m_lineWidths;
     UsageSnapshot m_snapshot;
     UsageMonitor m_monitor;
+    std::vector<QuoteLine> m_quotes{DefaultQuotes()};
+    std::size_t m_quoteIndex{(std::numeric_limits<std::size_t>::max)()};
+    std::mt19937 m_generator{std::random_device{}()};
     bool m_hasSnapshot{false};
     std::atomic_bool m_scanInFlight{false};
     std::atomic_bool m_scanQueued{false};
