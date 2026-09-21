@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "core/supervisor.hpp"
 #include "core/usage_snapshot.hpp"
 #include "overlay/desktop_overlay.hpp"
 #include "settings/settings_window.hpp"
@@ -206,24 +207,100 @@ bool CodexRunning() {
     return found;
 }
 
+// Why an overlay process ended; the supervisor reacts differently to a user
+// closed whale than to a crash.
+enum class OverlayOutcome {
+    SessionEnded,
+    CodexExited,
+    Crashed,
+    Stopped,
+};
+
+bool SupervisorStopped(HANDLE stop) {
+    return stop && WaitForSingleObject(stop, 0) == WAIT_OBJECT_0;
+}
+
+// Waits until Codex is running. False means the supervisor was asked to stop.
+bool WaitForCodexRun(HANDLE stop) {
+    while (!CodexRunning()) {
+        if (SupervisorStopped(stop)) return false;
+        Sleep(2000);
+    }
+    return true;
+}
+
+// "本次退出挂件" lasts until the next Codex start, so this first lets the
+// current Codex session end before waiting for a new one.
+bool WaitForNextCodexStart(HANDLE stop) {
+    while (CodexRunning()) {
+        if (SupervisorStopped(stop)) return false;
+        Sleep(2000);
+    }
+    return WaitForCodexRun(stop);
+}
+
+bool LaunchOverlayChild(PROCESS_INFORMATION* child) {
+    wchar_t image[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, image, MAX_PATH);
+    std::wstring command = L"\"" + std::wstring(image) + L"\" --overlay";
+    STARTUPINFOW startup{sizeof(startup)};
+    return CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, child) != FALSE;
+}
+
+// Keeps the overlay alive while Codex runs and reports why it ended.
+OverlayOutcome BabysitOverlay(PROCESS_INFORMATION& child, HANDLE stop) {
+    for (;;) {
+        if (SupervisorStopped(stop)) {
+            TerminateProcess(child.hProcess, 0);
+            return OverlayOutcome::Stopped;
+        }
+        if (WaitForSingleObject(child.hProcess, 2000) == WAIT_OBJECT_0) break;
+        if (!CodexRunning()) {
+            TerminateProcess(child.hProcess, 0);
+            return OverlayOutcome::CodexExited;
+        }
+    }
+    DWORD code = 0;
+    GetExitCodeProcess(child.hProcess, &code);
+    return code == 0 ? OverlayOutcome::SessionEnded : OverlayOutcome::Crashed;
+}
+
 int RunSupervisor() {
     if (const auto console = GetConsoleWindow()) ShowWindow(console, SW_HIDE);
     // install.ps1 (scheduled task) and the tray autostart toggle must never
     // run two supervisors, or two whales would appear.
     const HANDLE guard = CreateMutexW(nullptr, TRUE, L"Local\\ApiBalanceWhaleSupervisorInstance");
     if (guard && GetLastError() == ERROR_ALREADY_EXISTS) return 0;
-    while (!CodexRunning()) Sleep(2000);
-    wchar_t image[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, image, MAX_PATH);
-    std::wstring command = L"\"" + std::wstring(image) + L"\" --overlay";
-    STARTUPINFOW startup{sizeof(startup)};
-    PROCESS_INFORMATION child{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &child)) return 1;
-    CloseHandle(child.hThread);
-    while (CodexRunning() && WaitForSingleObject(child.hProcess, 2000) == WAIT_TIMEOUT) {}
-    if (WaitForSingleObject(child.hProcess, 0) == WAIT_TIMEOUT) TerminateProcess(child.hProcess, 0);
-    CloseHandle(child.hProcess);
-    return 0;
+    // A full exit from the tray signals this event; a session exit leaves it
+    // alone, so the supervisor keeps living and restores the whale the next
+    // time Codex starts.
+    const HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, whale::kSupervisorStopEvent);
+    if (stop && GetLastError() == ERROR_ALREADY_EXISTS) ResetEvent(stop);
+
+    if (!WaitForCodexRun(stop)) return 0;
+    int crashes = 0;
+    for (;;) {
+        PROCESS_INFORMATION child{};
+        if (!LaunchOverlayChild(&child)) return 1;
+        const DWORD startedAt = GetTickCount();
+        const auto outcome = BabysitOverlay(child, stop);
+        CloseHandle(child.hThread);
+        CloseHandle(child.hProcess);
+        if (outcome == OverlayOutcome::Stopped) return 0;
+        if (outcome == OverlayOutcome::Crashed) {
+            // A whale that dies right after launch would otherwise be
+            // relaunched forever.
+            if (GetTickCount() - startedAt > 5000) crashes = 0;
+            if (++crashes > 3) return 1;
+            Sleep(1000);
+            if (!WaitForCodexRun(stop)) return 0;
+            continue;
+        }
+        // Both a Codex shutdown and a session exit go dormant until the next
+        // Codex start.
+        if (!WaitForNextCodexStart(stop)) return 0;
+        crashes = 0;
+    }
 }
 
 int RunOverlay(bool settings = false) {

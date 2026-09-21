@@ -24,7 +24,7 @@ using namespace Gdiplus;
 
 constexpr wchar_t kSettingsClass[] = L"ApiBalanceWhaleSettingsWindow";
 constexpr int kClientWidth = 520;
-constexpr int kClientHeight = 480;
+constexpr int kClientHeight = 640;
 constexpr int kRowHeight = 52;
 constexpr int kMargin = 24;
 constexpr int kButtonWidth = 44;
@@ -48,6 +48,10 @@ enum class Hotspot {
     SoundSet,
     HideDown,
     HideUp,
+    TurnNotice,
+    TurnDown,
+    TurnUp,
+    AutoClose,
     AutoStart,
     Save,
     ResetPosition,
@@ -59,6 +63,9 @@ struct SettingsState {
     int sound{1};
     int soundSet{0};
     int hideSeconds{5};
+    int turnSeconds{6};
+    int turnNotice{1};
+    int autoClose{1};
     int x{INT_MIN};
     int y{INT_MIN};
 };
@@ -90,6 +97,9 @@ SettingsState LoadState(const std::filesystem::path& configPath) {
     state.sound = ReadInt(text, "sound", state.sound);
     state.soundSet = ReadInt(text, "soundSet", state.soundSet);
     state.hideSeconds = ReadInt(text, "hideSeconds", state.hideSeconds);
+    state.turnSeconds = ReadInt(text, "turnSeconds", state.turnSeconds);
+    state.turnNotice = ReadInt(text, "turnNotice", state.turnNotice);
+    state.autoClose = ReadInt(text, "autoClose", state.autoClose);
     state.x = ReadInt(text, "x", INT_MIN);
     state.y = ReadInt(text, "y", INT_MIN);
     return state;
@@ -107,7 +117,10 @@ bool SaveState(const std::filesystem::path& configPath, const SettingsState& sta
     output << "{\"size\":" << state.size
            << ",\"sound\":" << (state.sound ? 1 : 0)
            << ",\"soundSet\":" << state.soundSet
-           << ",\"hideSeconds\":" << state.hideSeconds;
+           << ",\"hideSeconds\":" << state.hideSeconds
+           << ",\"turnSeconds\":" << state.turnSeconds
+           << ",\"turnNotice\":" << (state.turnNotice ? 1 : 0)
+           << ",\"autoClose\":" << (state.autoClose ? 1 : 0);
     if (keepPosition && state.x != INT_MIN && state.y != INT_MIN) {
         output << ",\"x\":" << state.x << ",\"y\":" << state.y;
     }
@@ -224,7 +237,11 @@ private:
         if (inside(ToggleRect(2))) return Hotspot::SoundSet;
         if (inside(MinusRect(3))) return Hotspot::HideDown;
         if (inside(PlusRect(3))) return Hotspot::HideUp;
-        if (inside(ToggleRect(4))) return Hotspot::AutoStart;
+        if (inside(ToggleRect(4))) return Hotspot::TurnNotice;
+        if (inside(MinusRect(5))) return Hotspot::TurnDown;
+        if (inside(PlusRect(5))) return Hotspot::TurnUp;
+        if (inside(ToggleRect(6))) return Hotspot::AutoClose;
+        if (inside(ToggleRect(7))) return Hotspot::AutoStart;
         if (inside(ActionRect(0))) return Hotspot::Save;
         if (inside(ActionRect(1))) return Hotspot::ResetPosition;
         if (inside(ActionRect(2))) return Hotspot::Close;
@@ -290,20 +307,33 @@ private:
         DrawLabel(graphics, 2, L"音效组");
         DrawButton(graphics, ToggleRect(2), m_state.soundSet == 1 ? L"小黄鸭" : L"原版", false);
 
-        DrawLabel(graphics, 3, L"自动收起");
+        DrawLabel(graphics, 3, L"气泡时长");
         DrawButton(graphics, MinusRect(3), L"-", false);
         DrawButton(graphics, ValueRect(3), std::to_wstring(m_state.hideSeconds) + L" 秒", false);
         DrawButton(graphics, PlusRect(3), L"+", false);
 
-        DrawLabel(graphics, 4, L"开机自启");
-        DrawButton(graphics, ToggleRect(4), m_autoStart ? L"开" : L"关", m_autoStart);
+        DrawLabel(graphics, 4, L"每轮提示");
+        DrawButton(graphics, ToggleRect(4), m_state.turnNotice ? L"开" : L"关", m_state.turnNotice != 0);
+
+        DrawLabel(graphics, 5, L"提示时长");
+        DrawButton(graphics, MinusRect(5), L"-", false);
+        DrawButton(graphics, ValueRect(5), std::to_wstring(m_state.turnSeconds) + L" 秒", false);
+        DrawButton(graphics, PlusRect(5), L"+", false);
+
+        DrawLabel(graphics, 6, L"自动收起");
+        DrawButton(graphics, ToggleRect(6), m_state.autoClose ? L"开" : L"关", m_state.autoClose != 0);
+
+        DrawLabel(graphics, 7, L"开机自启");
+        DrawButton(graphics, ToggleRect(7), m_autoStart ? L"开" : L"关", m_autoStart);
 
         const auto actions = ActionRect(0);
-        graphics.DrawString(L"音效：原版 D1/D2，小黄鸭 Ya1/Ya2；开机自启写入当前用户启动项。", -1, &noteFont,
+        graphics.DrawString(L"每轮提示显示本轮模型与 token；配额气泡固定 10 秒，普通气泡用气泡时长。", -1, &noteFont,
                             PointF(static_cast<REAL>(kMargin), static_cast<REAL>(actions.top) - 30.0f), nullptr, &mutedBrush);
+        graphics.DrawString(L"快捷键默认 Ctrl+Alt+W（被占用时自动换 Ctrl+Shift+W，以托盘提示为准）；关闭自动收起后气泡常驻。", -1, &noteFont,
+                            PointF(static_cast<REAL>(kMargin), static_cast<REAL>(actions.top) - 52.0f), nullptr, &mutedBrush);
         if (!m_status.empty()) {
             graphics.DrawString(m_status.c_str(), -1, &noteFont,
-                                PointF(static_cast<REAL>(kMargin), static_cast<REAL>(actions.top) - 52.0f), nullptr, &mutedBrush);
+                                PointF(static_cast<REAL>(kMargin), static_cast<REAL>(actions.top) - 74.0f), nullptr, &mutedBrush);
         }
 
         DrawButton(graphics, ActionRect(0), L"保存", true);
@@ -334,6 +364,18 @@ private:
             break;
         case Hotspot::HideUp:
             m_state.hideSeconds = std::min(120, m_state.hideSeconds + 1);
+            break;
+        case Hotspot::TurnNotice:
+            m_state.turnNotice = m_state.turnNotice ? 0 : 1;
+            break;
+        case Hotspot::TurnDown:
+            m_state.turnSeconds = std::max(3, m_state.turnSeconds - 1);
+            break;
+        case Hotspot::TurnUp:
+            m_state.turnSeconds = std::min(120, m_state.turnSeconds + 1);
+            break;
+        case Hotspot::AutoClose:
+            m_state.autoClose = m_state.autoClose ? 0 : 1;
             break;
         case Hotspot::AutoStart:
             m_autoStart = !m_autoStart;

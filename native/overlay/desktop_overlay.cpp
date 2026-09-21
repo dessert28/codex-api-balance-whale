@@ -2,6 +2,8 @@
 #include "desktop_overlay.hpp"
 #include "../core/audio.hpp"
 #include "../core/autostart.hpp"
+#include "../core/bubble_policy.hpp"
+#include "../core/supervisor.hpp"
 
 #include <gdiplus.h>
 #include <shellapi.h>
@@ -40,7 +42,7 @@ constexpr UINT kMessageSnapshot = WM_APP + 1;
 constexpr UINT kTrayCallbackMessage = WM_APP + 2;
 constexpr UINT kMessageShowQuota = WM_APP + 3;
 constexpr UINT kRefreshIntervalMs = 5000;
-constexpr UINT kDefaultHideMs = 5000;
+constexpr int kHotkeyShowQuota = 1;
 constexpr int kSnapDistance = 24;
 constexpr int kDragThreshold = 6;
 constexpr BYTE kTransparentHitAlpha = 24;
@@ -51,7 +53,25 @@ constexpr UINT kTraySize = 1004;
 constexpr UINT kTrayAutoStart = 1005;
 constexpr UINT kTraySettings = 1006;
 constexpr UINT kTrayExit = 1007;
+constexpr UINT kTraySessionExit = 1008;
+constexpr UINT kTrayTurnNotice = 1009;
+constexpr UINT kTrayAutoClose = 1010;
+constexpr UINT kTrayHotkeyHint = 1011;
 constexpr int kSizePresets[] = {300, 440, 580};
+
+struct HotkeyChoice {
+    UINT modifiers;
+    UINT virtualKey;
+    const wchar_t* label;
+};
+
+// Ctrl+Alt+W is the upstream shortcut. Other applications are allowed to grab
+// global hotkeys first, so the next free candidate is used instead and the
+// tray shows which one is actually bound.
+constexpr HotkeyChoice kHotkeyChoices[] = {
+    {MOD_CONTROL | MOD_ALT, 'W', L"Ctrl+Alt+W"},
+    {MOD_CONTROL | MOD_SHIFT, 'W', L"Ctrl+Shift+W"},
+};
 
 // Upstream widget geometry, in the 1026x1026 coordinate space used by the SVG
 // asset so the bubble keeps the original proportions.
@@ -179,6 +199,7 @@ public:
         m_reloadMessage = RegisterWindowMessageW(kOverlayReloadMessage);
         m_audio = std::make_unique<AudioPlayer>(m_options.assetPath.parent_path());
         InitTray();
+        RegisterQuotaHotkey();
         Render();
         Present();
         ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
@@ -334,6 +355,7 @@ private:
 
     void LoadConfig() {
         m_options.hasPosition = false;
+        m_policy.hideSeconds = m_options.hideSeconds;
         std::ifstream input(m_options.configPath, std::ios::binary);
         if (!input) return;
         const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
@@ -341,10 +363,12 @@ private:
         m_options.size = ReadJsonInt(text, "size", m_options.size);
         m_options.soundEnabled = ReadJsonInt(text, "sound", m_options.soundEnabled ? 1 : 0) != 0;
         m_options.soundSet = std::clamp(ReadJsonInt(text, "soundSet", m_options.soundSet), 0, 1);
-        m_options.hideSeconds = std::clamp(ReadJsonInt(text, "hideSeconds", m_options.hideSeconds), 3, 120);
+        m_policy.hideSeconds = std::clamp(ReadJsonInt(text, "hideSeconds", m_policy.hideSeconds), 3, 120);
+        m_policy.turnSeconds = std::clamp(ReadJsonInt(text, "turnSeconds", m_policy.turnSeconds), 3, 120);
+        m_policy.autoClose = ReadJsonInt(text, "autoClose", m_policy.autoClose ? 1 : 0) != 0;
+        m_turnNotice = ReadJsonInt(text, "turnNotice", m_turnNotice ? 1 : 0) != 0;
         m_soundEnabled = m_options.soundEnabled;
         m_soundSet = m_options.soundSet;
-        m_hideMs = static_cast<UINT>(m_options.hideSeconds) * 1000u;
         const int x = ReadJsonInt(text, "x", INT_MIN);
         const int y = ReadJsonInt(text, "y", INT_MIN);
         if (x != INT_MIN && y != INT_MIN) {
@@ -367,7 +391,10 @@ private:
                << ",\"y\":" << rect.top
                << ",\"sound\":" << (m_soundEnabled ? 1 : 0)
                << ",\"soundSet\":" << m_soundSet
-               << ",\"hideSeconds\":" << (m_hideMs / 1000) << "}\n";
+               << ",\"hideSeconds\":" << m_policy.hideSeconds
+               << ",\"turnSeconds\":" << m_policy.turnSeconds
+               << ",\"autoClose\":" << (m_policy.autoClose ? 1 : 0)
+               << ",\"turnNotice\":" << (m_turnNotice ? 1 : 0) << "}\n";
     }
 
     void Render() {
@@ -554,8 +581,10 @@ private:
         m_snapshot = snapshot;
         m_hasSnapshot = true;
         if (const auto turn = m_monitor.Update(m_snapshot)) {
-            ShowTurnNotice(*turn);
-            return;
+            if (m_turnNotice) {
+                ShowTurnNotice(*turn);
+                return;
+            }
         }
         if (m_bubble != Bubble::Hidden) {
             if (m_bubble == Bubble::Quota) BuildQuotaLines();
@@ -574,7 +603,7 @@ private:
     void ShowQuota() {
         BuildQuotaLines();
         m_bubble = Bubble::Quota;
-        ArmHideTimer();
+        ArmHideTimer(BubbleKind::Quota);
         Render();
         Present();
     }
@@ -597,7 +626,7 @@ private:
         index = pick(generator);
         SetLines({quotes[index]}, {false});
         m_bubble = Bubble::Quote;
-        ArmHideTimer();
+        ArmHideTimer(BubbleKind::Quote);
         Render();
         Present();
     }
@@ -609,10 +638,10 @@ private:
         header << (model.empty() ? L"本轮" : model) << L" · 本轮 " << turn.deltaTokens << L" tokens";
         SetLines({header.str(),
                   QuotaLine(L"5 小时", m_snapshot.fiveHour, stale),
-                  QuotaLine(L"本周", m_snapshot.weekly, stale)},
+                 QuotaLine(L"本周", m_snapshot.weekly, stale)},
                  {false, stale, stale});
         m_bubble = Bubble::Turn;
-        ArmHideTimer();
+        ArmHideTimer(BubbleKind::Turn);
         Render();
         Present();
     }
@@ -624,8 +653,21 @@ private:
         Present();
     }
 
-    void ArmHideTimer() {
-        SetTimer(m_hwnd, kIdHideBubble, m_hideMs, nullptr);
+    BubbleKind CurrentKind() const {
+        switch (m_bubble) {
+        case Bubble::Quota: return BubbleKind::Quota;
+        case Bubble::Turn: return BubbleKind::Turn;
+        default: return BubbleKind::Quote;
+        }
+    }
+
+    // Every scene carries its own lifetime: the quota card keeps the upstream
+    // 10 s, the per-turn notice its own delay, and a random line the bubble
+    // delay. A zero result means the bubble stays until the user clicks it.
+    void ArmHideTimer(BubbleKind kind) {
+        KillTimer(m_hwnd, kIdHideBubble);
+        const int ttlMs = BubbleTtlMs(kind, m_policy);
+        if (ttlMs > 0) SetTimer(m_hwnd, kIdHideBubble, static_cast<UINT>(ttlMs), nullptr);
     }
 
     HICON LoadTrayIcon() const {
@@ -674,12 +716,32 @@ private:
         return static_cast<int>(std::lround(100.0 * m_size / kSizePresets[1]));
     }
 
+    // Ctrl+Alt+W is the upstream global shortcut; the overlay owns the
+    // window the hotkey is registered against.
+    void RegisterQuotaHotkey() {
+        for (const auto& choice : kHotkeyChoices) {
+            if (!RegisterHotKey(m_hwnd, kHotkeyShowQuota, choice.modifiers, choice.virtualKey)) continue;
+            m_hotkeyRegistered = true;
+            m_hotkeyLabel = choice.label;
+            break;
+        }
+        DebugLog(m_hotkeyRegistered ? L"hotkey " + m_hotkeyLabel + L" registered" : L"hotkey registration failed");
+    }
+
+    void ToggleQuota() {
+        if (m_bubble == Bubble::Quota) HideBubble();
+        else ShowQuota();
+    }
+
     void ShowTrayMenu() {
         POINT cursor{};
         GetCursorPos(&cursor);
         HMENU menu = CreatePopupMenu();
         if (!menu) return;
         AppendMenuW(menu, MF_STRING, kTrayQuota, L"查看配额");
+        const std::wstring hotkeyHint =
+            L"快捷键：" + (m_hotkeyLabel.empty() ? std::wstring(L"不可用（已被占用）") : m_hotkeyLabel);
+        AppendMenuW(menu, MF_STRING | MF_DISABLED, kTrayHotkeyHint, hotkeyHint.c_str());
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING | (m_soundEnabled ? MF_CHECKED : 0), kTraySound, L"音效");
         AppendMenuW(menu, MF_STRING | (m_soundSet == 1 ? MF_CHECKED : 0), kTraySoundSet, L"音效组：小黄鸭");
@@ -687,9 +749,12 @@ private:
         sizeLabel << L"大小：" << SizePercent() << L"%";
         AppendMenuW(menu, MF_STRING, kTraySize, sizeLabel.str().c_str());
         AppendMenuW(menu, MF_STRING | (whale::IsAutoStartEnabled() ? MF_CHECKED : 0), kTrayAutoStart, L"开机自启");
+        AppendMenuW(menu, MF_STRING | (m_turnNotice ? MF_CHECKED : 0), kTrayTurnNotice, L"每轮提示");
+        AppendMenuW(menu, MF_STRING | (m_policy.autoClose ? MF_CHECKED : 0), kTrayAutoClose, L"气泡自动收起");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTraySettings, L"设置…");
-        AppendMenuW(menu, MF_STRING, kTrayExit, L"退出");
+        AppendMenuW(menu, MF_STRING, kTraySessionExit, L"本次退出挂件（下次启动 Codex 恢复）");
+        AppendMenuW(menu, MF_STRING, kTrayExit, L"完全退出");
 
         SetForegroundWindow(m_hwnd);
         const int command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, cursor.x, cursor.y, 0, m_hwnd, nullptr);
@@ -734,7 +799,22 @@ private:
         case kTraySettings:
             LaunchSettings();
             break;
+        case kTrayTurnNotice:
+            m_turnNotice = !m_turnNotice;
+            SaveConfig();
+            break;
+        case kTrayAutoClose:
+            m_policy.autoClose = !m_policy.autoClose;
+            if (m_policy.autoClose && m_bubble != Bubble::Hidden) ArmHideTimer(CurrentKind());
+            SaveConfig();
+            break;
+        case kTraySessionExit:
+            // Closing the window leaves the supervisor alive, so the whale
+            // comes back the next time Codex starts.
+            DestroyWindow(m_hwnd);
+            break;
         case kTrayExit:
+            SignalSupervisorStop();
             DestroyWindow(m_hwnd);
             break;
         default:
@@ -754,6 +834,15 @@ private:
         }
         CloseHandle(child.hThread);
         CloseHandle(child.hProcess);
+    }
+
+    // Wakes the supervisor when the tray asks for a full exit; the supervisor
+    // owns the event, so a manually started overlay simply finds nothing.
+    void SignalSupervisorStop() const {
+        const HANDLE stop = OpenEventW(EVENT_MODIFY_STATE, FALSE, whale::kSupervisorStopEvent);
+        if (!stop) return;
+        SetEvent(stop);
+        CloseHandle(stop);
     }
 
     void ApplySize(int size) {
@@ -803,13 +892,15 @@ private:
         const float x = static_cast<float>(local.x) / m_unit;
         const float y = static_cast<float>(local.y) / m_unit;
         if (m_bubble != Bubble::Hidden && InBubble(x, y)) {
-            ShowQuote();
+            // Clicking the card turns the quota view into a random line and
+            // dismisses every other scene, like the upstream widget.
+            if (m_bubble == Bubble::Quota) ShowQuote();
+            else HideBubble();
             return;
         }
-        // A whale click always surfaces the quota first, even when a turn
-        // notice is on screen; a second click turns it into a random line.
-        if (m_bubble == Bubble::Quota) ShowQuote();
-        else ShowQuota();
+        // The whale body always re-opens the quota card with a fresh timer,
+        // even while the card is already on screen.
+        ShowQuota();
     }
 
     void BeginDrag(POINT screen) {
@@ -850,7 +941,11 @@ private:
             SaveConfig();
             return;
         }
-        HandleClick(POINT{screen.x, screen.y}, secondary);
+        // HandleClick tests the view box, so the release point has to be
+        // mapped back to client space instead of passing screen coordinates.
+        POINT local{screen.x, screen.y};
+        ScreenToClient(m_hwnd, &local);
+        HandleClick(local, secondary);
     }
 
     LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) {
@@ -912,6 +1007,9 @@ private:
         case kMessageShowQuota:
             ShowQuota();
             return 0;
+        case WM_HOTKEY:
+            if (wParam == kHotkeyShowQuota) ToggleQuota();
+            return 0;
         case WM_CAPTURECHANGED:
             m_dragging = false;
             return 0;
@@ -935,6 +1033,7 @@ private:
         case WM_DESTROY:
             KillTimer(m_hwnd, kIdRefresh);
             KillTimer(m_hwnd, kIdHideBubble);
+            if (m_hotkeyRegistered) UnregisterHotKey(m_hwnd, kHotkeyShowQuota);
             RemoveTray();
             PostQuitMessage(0);
             return 0;
@@ -962,7 +1061,10 @@ private:
     bool m_trayAdded{false};
     bool m_soundEnabled{true};
     int m_soundSet{0};
-    UINT m_hideMs{kDefaultHideMs};
+    BubblePolicy m_policy;
+    bool m_turnNotice{true};
+    bool m_hotkeyRegistered{false};
+    std::wstring m_hotkeyLabel;
     Bubble m_bubble{Bubble::Hidden};
     std::vector<std::wstring> m_lines;
     std::vector<bool> m_staleLines;

@@ -38,6 +38,7 @@
       <WarningLevel>Level4</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>_DEBUG;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -50,6 +51,7 @@
       <WarningLevel>Level4</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <PreprocessorDefinitions>NDEBUG;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <Optimization>MaxSpeed</Optimization>
     </ClCompile>
@@ -65,6 +67,8 @@
     <ClInclude Include="core\usage_monitor.hpp" />
     <ClInclude Include="core\autostart.hpp" />
     <ClInclude Include="core\audio.hpp" />
+    <ClInclude Include="core\bubble_policy.hpp" />
+    <ClInclude Include="core\supervisor.hpp" />
     <ClInclude Include="overlay\desktop_overlay.hpp" />
     <ClInclude Include="settings\settings_window.hpp" />
   </ItemGroup>
