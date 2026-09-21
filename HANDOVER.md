@@ -9,7 +9,7 @@
 | 本地路径（这台机器） | `D:\project\githubclone\codex-marketplace\plugins\api-balance-whale` |
 | 你的远端 | `git@github.com:dessert28/codex-api-balance-whale.git`（分支 `main`）。在 `D:\project\githubclone\codex-api-balance-whale` 这个 clone 里它的名字是 `origin` |
 | 上游远端 | `https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget.git`（分支 `For-Codex`）。新 clone 默认不配置它，需要对上游取经时自己 `git remote add upstream` 再加 |
-| 版本 | `0.3.0+codex.<时间戳>`（`.codex-plugin/plugin.json`，每次重装前用脚本更新） |
+| 版本 | `0.3.2+codex.<时间戳>`（`.codex-plugin/plugin.json`，每次重装前用脚本更新） |
 | 运行形态 | 单一 C++ 程序 `native\bin\Release\api-balance-whale.exe`，纯 Win32 + GDI+，无 Node / Electron / Windows App SDK |
 | 本地 marketplace | `D:\project\githubclone\codex-marketplace`（名字 `personal`） |
 | 插件安装缓存 | `C:\Users\<你>\.codex\plugins\cache\personal\api-balance-whale\<版本>` |
@@ -71,6 +71,7 @@ native 目录：
 | `core\audio.cpp` | MCI 播放 mp3（`D1/D2` 原版、`Ya1/Ya2` 小黄鸭） |
 | `core\autostart.cpp` | 开机自启：Run 键与计划任务互斥管理 |
 | `core\bubble_policy.hpp` | 每类气泡的收起时长策略：配额 10 秒、普通气泡 `hideSeconds`、每轮提示 `turnSeconds`，`autoClose=0` 表示常驻 |
+| `core\session_watcher.cpp` | `ReadDirectoryChangesW` 递归监听 `sessions` 目录（去抖 1.5 秒），日志一写完就让悬浮层重算，每轮提示因此能在约 2 秒内出现 |
 | `core\supervisor.hpp` | supervisor 与悬浮层共用的“完全退出”事件名 |
 | `native\tests\*.cpp` | 使用快照、轮次监控与气泡时长的单元测试（见第 6 节命令） |
 
@@ -93,6 +94,7 @@ native 目录：
 - 点鲸鱼：显示 5 小时 / 本周配额两行，10 秒后自动收起；再点鲸鱼只重新计时、不换内容（对齐上游 `showCodexQuotaOnClick`）。
 - 点气泡：把配额卡片换成随机语句（随机语句按 `hideSeconds` 收起）；再点随机语句或右键即收起（对齐上游 `showRandomBubbleAfterQuota` / `bubbleNext`）。
 - 每轮 Codex 对话结束提示一次「模型 + 本轮 token + 两行配额」，按 `turnSeconds` 收起；`turnNotice=0` 时完全不弹。
+- 每轮 Codex 对话结束提示一次「模型 + 本轮 token + 两行配额」，按 `turnSeconds` 收起；`turnNotice=0` 时完全不弹。日志写入后约 1.5–2 秒弹出（目录监听 + 1.5 秒去抖），5 秒轮询只作兜底。
 - 全局快捷键默认 `Ctrl+Alt+W` 显示/收起配额卡片；注册失败（被别的程序占用）自动改用 `Ctrl+Shift+W`，托盘首项显示实际绑定。
 - 拖拽移动，靠近工作区边缘 24px 自动吸附；位置写入 `overlay.json`。
 - 托盘：查看配额（含快捷键提示）、音效、音效组、大小预设（300/440/580）、开机自启、每轮提示、气泡自动收起、设置、「本次退出挂件（下次启动 Codex 恢复）」、「完全退出」；双击托盘图标显示配额。
@@ -121,6 +123,12 @@ native 目录：
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\usage_snapshot_tests.cpp native\core\usage_snapshot.cpp /Fe:native\tests\usage_snapshot_tests.exe && native\tests\usage_snapshot_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\usage_monitor_tests.cpp native\core\usage_snapshot.cpp native\core\usage_monitor.cpp /Fe:native\tests\usage_monitor_tests.exe && native\tests\usage_monitor_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_policy_tests.cpp /Fe:native\tests\bubble_policy_tests.exe && native\tests\bubble_policy_tests.exe"
+cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\session_watcher_tests.cpp native\core\session_watcher.cpp /Fe:native\tests\session_watcher_tests.exe && native\tests\session_watcher_tests.exe"
+
+# 端到端回归（需要先编译 Release；截图与临时日志落在 qa-output\，不入库）
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 18 项：交互、气泡时长、托盘、每轮提示延迟
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-supervisor.ps1  # 7 项：托管与两种退出
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-live.ps1        # 4 项：真实会话目录下的启动、待机 CPU、干净退出
 
 # 插件清单校验
 python <plugin-creator skill>\scripts\validate_plugin.py .
@@ -158,6 +166,14 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 - 设置窗口：截图确认新增「气泡时长 / 每轮提示 / 提示时长 / 自动收起」四行无重叠，窗口 542×696。
 - 截图存于 `qa-output\shot-*.png`（不入库）。
 
+第三轮（本次改动，`qa\verify-parity.ps1` 18 项 + `qa\verify-supervisor.ps1` 7 项 + 新增 `qa\verify-live.ps1` 4 项，全部 PASS）：
+
+- 每轮提示延迟：新增目录监听（`core\session_watcher.cpp`）+ 把 `usage-cache.json` 的热窗口从 15 秒压到 2 秒。脚本实测：向伪造日志追加一轮 token 后 **1.6 秒**弹出气泡（改前最长约 20 秒）。
+- 单元测试新增缓存新鲜度用例：追加一轮后 6 秒必须看到新数据；热窗口内仍复用缓存；`forceProbe=true` 会跳过热窗口。
+- 新增 `native\tests\session_watcher_tests.cpp`：嵌套目录写文件必须回调（实测 2 次通知），根目录不存在时不抛异常，`Stop()` 幂等且不挂。
+- 实机（真实 `%CODEX_HOME%`）：悬浮层正常启动，待机 12 秒 CPU 时间约 0.016 秒，`WM_CLOSE` 后自行退出（code 0）。
+- 4 个单元测试（usage_snapshot / usage_monitor / bubble_policy / session_watcher）全部通过；Release x64 编译无错误无警告。
+
 ## 8. 尚未实现 / 与上游原版差异
 
 功能缺口（上游有、这里没有）：
@@ -174,7 +190,7 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 2. 气泡内容：上游气泡可放任意模块（文字大小/颜色/图片/GIF 混排），这里只有「两行配额」或「一行随机语句」。
 3. 随机语句：上游是可编辑的加权随机集合（含峰谷提示、今日已用、GIF、卖萌吐槽），这里是 10 条内置句子。
 4. 气泡内文字大小：上游用固定字号（`dshwv-label` 66 单位等），这里按气泡内可用宽度自动收缩。
-5. 每轮提示延迟：上游 5 秒内出现，这里最长约 20 秒（5 秒轮询 + `usage-cache.json` 的 15 秒 TTL，见第 9 节）。
+5. 每轮提示延迟：上游用 `fs.watch` 秒级反应；这里改成 `ReadDirectoryChangesW` 监听 + 1.5 秒去抖，实测约 1.6 秒，已对齐。
 6. 手感：上游气泡是 DOM 弹性动画（`cubic-bezier` 缩放淡入），这里分层窗口直接贴位，没有入场动画。
 
 有意保留的边界：只监测本机 Codex 会话（不监测 ChatGPT 网页端）；只覆盖主显示器工作区，不覆盖全屏独占游戏与 UAC 安全桌面；首次冷启动需要扫描近期归档日志。
@@ -188,14 +204,15 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 5. **别用 WinUI 画悬浮层/设置页**：WinUI 3 的组合层做不出真正的逐像素透明，而且这台机器上 `XamlControlsResources` 会因 `AcrylicBackgroundFillColorDefaultBrush` 缺失直接崩溃（已因此改为纯 GDI+）。
 6. **首次编译**：删掉 `native\obj` 后第一次构建会重新生成全部中间文件，耗时会明显变长。
 7. `native\obj` 和 `native\bin` 不入库，换机器必须重新编译，然后重新 `codex plugin add` 才会用到新的 exe。
-8. **每轮提示最晚会晚约 20 秒**：`usage-cache.json` 带 15 秒 TTL（上一版为省 CPU 加的），加上 5 秒轮询，一轮对话结束后最长约 20 秒才弹；要更快就改小 `usage_snapshot.cpp` 里 `generatedAt + 15 < nowSeconds` 的 15。
+8. **缓存热窗口必须短于轮询间隔**：`usage-cache.json` 的“热窗口”现在是 2 秒（`usage_snapshot.cpp` 里的 `kHotCacheSeconds`），超时后按文件指纹（大小 + 修改时间）重新校验，所以一轮对话结束后最多再等一个 5 秒轮询。把它调大就会让每轮提示变慢——15 秒那版最长要等 20 秒。目录监听触发的刷新带 `forceProbe=true`，会直接跳过热窗口。
 9. **全局热键可能被占用**：`Ctrl+Alt+W` 经常被别的软件抢走（本机实测 `RegisterHotKey` 返回 1409）。程序会自动回退 `Ctrl+Shift+W`；两个都失败时托盘首项显示“不可用（已被占用）”。
 10. **回调里的鼠标坐标是屏幕坐标**：`HandleClick` 只接受客户区坐标，必须先 `ScreenToClient`。0.3.0 初版漏了这一步，导致点气泡实际走成点鲸鱼（本次已修）。
+11. **`ReadDirectoryChangesW` 的目录句柄必须带 `FILE_FLAG_OVERLAPPED`**：否则完成事件永远不置位，`GetOverlappedResult(..., TRUE)` 会永久阻塞（本次踩过一次：测试进程 0 CPU 卡死）。现在 `session_watcher.cpp` 用 `FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED` 打开，等待上限 500 毫秒 + `CancelIoEx`，保证 `Stop()` 立刻返回。
 
 ## 10. 建议的下一步（按性价比）
 
-1. 把每轮提示延迟从 ~20 秒压到 ~5 秒：让缓存 TTL 小于轮询间隔，或只对「配额/总量」用 TTL、「最新一轮」每次校验文件 `last_write_time`。
-2. 快捷键做成可配置（并同步显示在设置窗口里，现在设置窗口只写了默认值）。
-3. 随机语句改为可编辑的加权集合（`overlay.json` 加 `quotes` + 权重），向第 8 节第 3 条靠。
-4. 余额/账本（`whale_balance`、多服务商、汇率、每轮费用）——工作量大，先定存储格式。
-5. 素材库与多角色、气泡样式编辑器。
+1. 快捷键做成可配置（并同步显示在设置窗口里，现在设置窗口只写了默认值）。
+2. 随机语句改为可编辑的加权集合（`overlay.json` 加 `quotes` + 权重），向第 8 节第 3 条靠。
+3. 余额/账本（`whale_balance`、多服务商、汇率、每轮费用）——工作量大，先定存储格式。
+4. 素材库与多角色、气泡样式编辑器。
+5. 每轮提示音：上游在每轮用量提醒前调 `playTaskEndSound`（`usageSet.taskEnd = {on, sel}`，默认 `on:false`；`sel` 可选 `preset:duck:press` / `preset:duck:release` / `preset:fx1:*` / 音效组 / 音频片段，音量 `soundVol` 默认 0.9）。原生版已有 `core\audio.cpp` 的 MCI 播放，补一个 `taskEndSound` 开关最省事。

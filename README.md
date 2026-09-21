@@ -13,7 +13,7 @@
 - 托盘图标：查看配额（含快捷键提示）、音效、音效组、大小预设（300/440/580）、开机自启、每轮提示、气泡自动收起、设置、本次退出挂件（下次启动 Codex 恢复）、完全退出。
 - 设置窗口（`--settings`）：大小、点击音效、音效组、气泡时长、每轮提示开关、提示时长、自动收起开关、开机自启、恢复默认位置；保存后立即刷新悬浮层。
 - 拖拽移动并在工作区边缘吸附；位置与设置记忆在 `%LOCALAPPDATA%\Codex\api-balance-whale\overlay.json`。
-- 每轮 Codex 对话结束后提示一次模型与本轮 token（默认 6 秒收起，可在托盘/设置里关闭）。
+- 每轮 Codex 对话结束后提示一次模型与本轮 token（默认 6 秒收起，可在托盘/设置里关闭）；悬浮层监听会话目录，日志写完后约 1.5–2 秒弹出，不再等下一个轮询周期。
 - MCP 提供 `whale_codex_usage`、`whale_usage`、`whale_status`、`whale_open`。
 - 只读 `%CODEX_HOME%\sessions` 与 `archived_sessions`，缓存写在同一数据目录；不读取 `auth.json`，不联网。
 
@@ -54,13 +54,19 @@ cd D:\project\githubclone\codex-marketplace\plugins\api-balance-whale
 
 ## 数据口径与限制
 
-token 按每个 JSONL 的 `total_token_usage` 差值累计；配额取最新可用的 `rate_limits.primary` 与 `rate_limits.secondary`。限制：只监测本机 Codex 会话（ChatGPT 网页端对话没有本机 token 记录）；只覆盖主显示器工作区，全屏独占游戏与 UAC 安全桌面不覆盖；首次冷启动需要扫描近期归档日志，5 秒轮询期间 CPU 约 2.6%；原 Electron/Node 实现已移除，`assets/whale-widget.js` 仅作为上游视觉参考保留。
+token 按每个 JSONL 的 `total_token_usage` 差值累计；配额取最新可用的 `rate_limits.primary` 与 `rate_limits.secondary`。悬浮层用 `ReadDirectoryChangesW` 监听 `%CODEX_HOME%\sessions`，日志一变就（去抖 1.5 秒）重算一次，5 秒轮询只作兜底；实测待机 12 秒的 CPU 时间约 0.02 秒。限制：只监测本机 Codex 会话（ChatGPT 网页端对话没有本机 token 记录）；只覆盖主显示器工作区，全屏独占游戏与 UAC 安全桌面不覆盖；首次冷启动需要扫描近期归档日志；原 Electron/Node 实现已移除，`assets/whale-widget.js` 仅作为上游视觉参考保留。
 
 ## 测试
 
 ```powershell
-cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /I native\core native\tests\usage_snapshot_tests.cpp native\core\usage_snapshot.cpp /Fe:native\tests\usage_snapshot_tests.exe && native\tests\usage_snapshot_tests.exe"
-cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /I native\core native\tests\usage_monitor_tests.cpp native\core\usage_snapshot.cpp native\core\usage_monitor.cpp /Fe:native\tests\usage_monitor_tests.exe && native\tests\usage_monitor_tests.exe"
+cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\usage_snapshot_tests.cpp native\core\usage_snapshot.cpp /Fe:native\tests\usage_snapshot_tests.exe && native\tests\usage_snapshot_tests.exe"
+cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\usage_monitor_tests.cpp native\core\usage_snapshot.cpp native\core\usage_monitor.cpp /Fe:native\tests\usage_monitor_tests.exe && native\tests\usage_monitor_tests.exe"
+cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_policy_tests.cpp /Fe:native\tests\bubble_policy_tests.exe && native\tests\bubble_policy_tests.exe"
+cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\session_watcher_tests.cpp native\core\session_watcher.cpp /Fe:native\tests\session_watcher_tests.exe && native\tests\session_watcher_tests.exe"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 18 项：交互、气泡时长、托盘、每轮提示延迟
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-supervisor.ps1  # 7 项：托管与两种退出
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-live.ps1        # 4 项：真实会话目录下的启动、待机 CPU、干净退出
 ```
 
 ## 调试

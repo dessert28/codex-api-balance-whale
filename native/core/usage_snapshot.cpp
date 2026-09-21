@@ -121,13 +121,19 @@ std::string Fingerprint(const std::vector<std::filesystem::path>& files) {
     return std::to_string(std::hash<std::string>{}(out.str()));
 }
 
+// The cache keeps the overlay refresh timer and MCP calls from re-scanning the
+// session directory. It has to stay well below the overlay refresh interval
+// (kRefreshIntervalMs in desktop_overlay.cpp), otherwise a finished turn stays
+// invisible until the entry expires and the bubble shows up seconds late.
+constexpr std::int64_t kHotCacheSeconds = 2;
+
 std::optional<UsageSnapshot> ReadCache(const std::filesystem::path& statePath, const std::string& fingerprint, const std::string& day, std::int64_t nowSeconds = 0) {
     std::ifstream input(statePath);
     if (!input) return std::nullopt;
     const std::string data{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
     if (StringField(data, "day").value_or("") != day) return std::nullopt;
     if (!fingerprint.empty() && StringField(data, "fingerprint").value_or("") != fingerprint) return std::nullopt;
-    if (fingerprint.empty() && NumberField(data, "generatedAt").value_or(0) + 15 < nowSeconds) return std::nullopt;
+    if (fingerprint.empty() && NumberField(data, "generatedAt").value_or(0) + kHotCacheSeconds < nowSeconds) return std::nullopt;
     UsageSnapshot snapshot;
     snapshot.todayTokens = static_cast<std::int64_t>(NumberField(data, "todayTokens").value_or(0));
     snapshot.last7dTokens = static_cast<std::int64_t>(NumberField(data, "last7dTokens").value_or(0));
@@ -163,7 +169,7 @@ void WriteCache(const std::filesystem::path& statePath, const std::string& finge
 
 }
 
-UsageSnapshot ReadUsageSnapshot(const std::filesystem::path& codexHome, const std::filesystem::path& statePath, std::chrono::system_clock::time_point now) {
+UsageSnapshot ReadUsageSnapshot(const std::filesystem::path& codexHome, const std::filesystem::path& statePath, std::chrono::system_clock::time_point now, bool forceProbe) {
     static std::optional<UsageSnapshot> lastGood;
     UsageSnapshot snapshot;
     std::unordered_map<std::string, std::int64_t> daily;
@@ -174,9 +180,11 @@ UsageSnapshot ReadUsageSnapshot(const std::filesystem::path& codexHome, const st
     std::optional<UsageWindow> secondary;
 
     const auto roots = {codexHome / "sessions", codexHome / "archived_sessions"};
-    if (const auto cached = ReadCache(statePath, "", Day(nowSeconds), nowSeconds)) {
-        if (!cached->stale) lastGood = *cached;
-        return *cached;
+    if (!forceProbe) {
+        if (const auto cached = ReadCache(statePath, "", Day(nowSeconds), nowSeconds)) {
+            if (!cached->stale) lastGood = *cached;
+            return *cached;
+        }
     }
     std::vector<std::filesystem::path> files;
     for (const auto& root : roots) {

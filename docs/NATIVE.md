@@ -19,6 +19,7 @@
 - 透明像素不参与命中测试，点击直接落到下面的窗口；鲸鱼与气泡区域可点击、拖拽，靠近工作区边缘自动吸附。
 - 交互：点鲸鱼显示 5 小时/本周配额（固定 10 秒收起，再点只是重新计时）；点气泡把配额卡片换成随机语句；再点随机语句或右键即收起；每轮新 token 会按“提示时长”自动提示一次。
 - 每类气泡各有寿命：配额卡片沿用上游 10 秒，随机语句用 `hideSeconds`，每轮提示用 `turnSeconds`；关掉“自动收起”后气泡一直留着，直到下一次点击。
+- 悬浮层用 `ReadDirectoryChangesW` 递归监听 `%CODEX_HOME%\sessions`，日志一有写入就（去抖 1.5 秒）立刻重算，5 秒轮询只作兜底，所以每轮提示在日志写完后约 2 秒内出现。
 - 全局快捷键默认 `Ctrl+Alt+W`（显示/收起配额卡片）。热键是按进程全局注册的，若已被别的程序占用就自动回退到 `Ctrl+Shift+W`，生效的组合写在托盘首项里。
 
 ## 托盘
@@ -40,7 +41,8 @@
 ## 用量读取
 
 - 只读 `%CODEX_HOME%\sessions` 与 `archived_sessions`，按每个 JSONL 的 `total_token_usage` 差值累计。
-- 5 小时/周窗口取最新 `rate_limits.primary`/`secondary`；缓存写入同一目录下的 `usage-cache.json`。
+- 5 小时/周窗口取最新 `rate_limits.primary`/`secondary`；缓存写入同一目录下的 `usage-cache.json`，指纹（各文件大小 + 修改时间）没变就直接复用，一行都不用重新解析。
+- 缓存里的“热窗口”只有 2 秒（`usage_snapshot.cpp` 的 `kHotCacheSeconds`）：必须短于 5 秒轮询，否则一轮对话结束后气泡要等缓存过期才弹。目录监听触发的刷新带 `forceProbe=true`，直接跳过这个热窗口按指纹重算。
 - 不读取 `auth.json`，不联网，不监测 ChatGPT 网页端对话，也不查询 API 余额。
 
 ## 调试

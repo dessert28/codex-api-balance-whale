@@ -268,23 +268,31 @@ function Invoke-TurnNotice([int]$turnNotice, [string]$tag) {
   Start-Sleep -Seconds 3
   $shot = Shot $h
   $baseline = BubblePixels $shot; $shot.Bitmap.Dispose()
-  # A new turn appears in the log; the next 5 s scan must decide whether to show it.
+  # A new turn appears in the log; the directory watcher and the 5 s poll have to
+  # decide whether to show it, and the bubble is timed from this moment.
   Add-Content -Path $jsonl -Value ('{"type":"event_msg","timestamp":"2026-09-21T01:10:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":160,"output_tokens":30}},"rate_limits":' + $quota + '}}') -Encoding ASCII
+  $appended = Get-Date
   $peak = $baseline
+  $latency = $null
   for ($i = 0; $i -lt 70; $i++) {
     Start-Sleep -Milliseconds 500
     $shot = Shot $h
     $now = BubblePixels $shot
-    if ($now -gt $peak) { $peak = $now; Save-Shot $shot ("shot-" + $tag + ".png") }
+    if ($now -gt $peak) {
+      $peak = $now
+      Save-Shot $shot ("shot-" + $tag + ".png")
+      if ($null -eq $latency -and $peak -gt $VISIBLE) { $latency = [math]::Round(((Get-Date) - $appended).TotalSeconds, 1) }
+    }
     $shot.Bitmap.Dispose()
   }
   Stop-Overlay
   Remove-Item Env:\LOCALAPPDATA, Env:\CODEX_HOME -ErrorAction SilentlyContinue
-  @{ Baseline = $baseline; Peak = $peak }
+  @{ Baseline = $baseline; Peak = $peak; Latency = $latency }
 }
 
 $on = Invoke-TurnNotice 1 'notice-on'
 Check 'turn notice shown when enabled' ($on.Peak -gt $VISIBLE) ("baseline=$($on.Baseline) peak=$($on.Peak)")
+Check 'turn notice arrives within 7 s' ($null -ne $on.Latency -and $on.Latency -le 7) ("latency=$($on.Latency)s")
 $off = Invoke-TurnNotice 0 'notice-off'
 Check 'turn notice suppressed when disabled' ($off.Peak -le ($off.Baseline + 200)) ("baseline=$($off.Baseline) peak=$($off.Peak)")
 

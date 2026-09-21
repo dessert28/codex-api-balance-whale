@@ -3,6 +3,7 @@
 #include "../core/audio.hpp"
 #include "../core/autostart.hpp"
 #include "../core/bubble_policy.hpp"
+#include "../core/session_watcher.hpp"
 #include "../core/supervisor.hpp"
 
 #include <gdiplus.h>
@@ -38,10 +39,15 @@ using namespace Gdiplus;
 
 constexpr UINT kIdRefresh = 1;
 constexpr UINT kIdHideBubble = 2;
+constexpr UINT kIdSessionChange = 3;
 constexpr UINT kMessageSnapshot = WM_APP + 1;
 constexpr UINT kTrayCallbackMessage = WM_APP + 2;
 constexpr UINT kMessageShowQuota = WM_APP + 3;
+constexpr UINT kMessageSessionsChanged = WM_APP + 4;
 constexpr UINT kRefreshIntervalMs = 5000;
+// A running turn writes a burst of log lines, so the file watcher waits for a
+// short quiet period instead of refreshing on every append.
+constexpr UINT kSessionDebounceMs = 1500;
 constexpr int kHotkeyShowQuota = 1;
 constexpr int kSnapDistance = 24;
 constexpr int kDragThreshold = 6;
@@ -215,6 +221,7 @@ public:
             DebugLog(log.str());
         }
         SetTimer(m_hwnd, kIdRefresh, kRefreshIntervalMs, nullptr);
+        StartSessionWatcher();
         RefreshAsync();
         return true;
     }
@@ -563,21 +570,39 @@ private:
         }
     }
 
-    void RefreshAsync() {
-        if (m_scanInFlight.exchange(true)) return;
+    // The watcher knows when the session logs move, so the overlay can refresh
+    // right away instead of waiting for the next poll. forceProbe skips the
+    // short lived cache, otherwise the fresh read would return cached numbers.
+    void RefreshAsync(bool forceProbe = false) {
+        if (m_scanInFlight.exchange(true)) {
+            m_scanQueued.store(true);
+            return;
+        }
         const auto codexHome = m_options.codexHome;
         const auto statePath = m_options.statePath;
         const HWND handle = m_hwnd;
-        std::thread([codexHome, statePath, handle] {
-            auto* snapshot = new UsageSnapshot(ReadUsageSnapshot(codexHome, statePath));
+        std::thread([codexHome, statePath, handle, forceProbe] {
+            auto* snapshot = new UsageSnapshot(ReadUsageSnapshot(codexHome, statePath, std::chrono::system_clock::now(), forceProbe));
             if (!PostMessageW(handle, kMessageSnapshot, 0, reinterpret_cast<LPARAM>(snapshot))) {
                 delete snapshot;
             }
         }).detach();
     }
 
+    void StartSessionWatcher() {
+        if (m_options.codexHome.empty()) return;
+        const HWND handle = m_hwnd;
+        m_watcher = std::make_unique<SessionWatcher>(m_options.codexHome / "sessions", [handle] {
+            PostMessageW(handle, kMessageSessionsChanged, 0, 0);
+        });
+        m_watcher->Start();
+    }
+
     void ApplySnapshot(const UsageSnapshot& snapshot) {
         m_scanInFlight.store(false);
+        // A change that arrived while this scan was running still has to be
+        // seen, otherwise it waits for the next poll and the bubble is late.
+        if (m_scanQueued.exchange(false)) RefreshAsync(true);
         m_snapshot = snapshot;
         m_hasSnapshot = true;
         if (const auto turn = m_monitor.Update(m_snapshot)) {
@@ -1007,6 +1032,11 @@ private:
         case kMessageShowQuota:
             ShowQuota();
             return 0;
+        case kMessageSessionsChanged:
+            // SetTimer with an existing id restarts the countdown, so a burst
+            // of writes collapses into one refresh once the log goes quiet.
+            SetTimer(m_hwnd, kIdSessionChange, kSessionDebounceMs, nullptr);
+            return 0;
         case WM_HOTKEY:
             if (wParam == kHotkeyShowQuota) ToggleQuota();
             return 0;
@@ -1023,6 +1053,9 @@ private:
                     Present();
                 }
                 RefreshAsync();
+            } else if (wParam == kIdSessionChange) {
+                KillTimer(m_hwnd, kIdSessionChange);
+                RefreshAsync(true);
             }
             return 0;
         case kMessageSnapshot: {
@@ -1033,6 +1066,8 @@ private:
         case WM_DESTROY:
             KillTimer(m_hwnd, kIdRefresh);
             KillTimer(m_hwnd, kIdHideBubble);
+            KillTimer(m_hwnd, kIdSessionChange);
+            if (m_watcher) m_watcher->Stop();
             if (m_hotkeyRegistered) UnregisterHotKey(m_hwnd, kHotkeyShowQuota);
             RemoveTray();
             PostQuitMessage(0);
@@ -1056,6 +1091,7 @@ private:
     std::unique_ptr<Image> m_whale;
     std::unique_ptr<FontFamily> m_family;
     std::unique_ptr<AudioPlayer> m_audio;
+    std::unique_ptr<SessionWatcher> m_watcher;
     NOTIFYICONDATAW m_tray{};
     HICON m_trayIcon{};
     bool m_trayAdded{false};
@@ -1073,6 +1109,7 @@ private:
     UsageMonitor m_monitor;
     bool m_hasSnapshot{false};
     std::atomic_bool m_scanInFlight{false};
+    std::atomic_bool m_scanQueued{false};
     bool m_dragging{false};
     bool m_movedDuringPress{false};
     POINT m_dragOrigin{};

@@ -34,14 +34,14 @@ description: 控制本机 Codex 配额小鲸鱼（原生 C++ 桌面悬浮窗）�
 - 点气泡：把配额卡片换成随机语句（按“气泡时长”收起，默认 5 秒）；再点随机语句或右键即收起。
 - 全局快捷键：默认 `Ctrl+Alt+W` 显示/收起配额卡片；被占用时自动回退 `Ctrl+Shift+W`，以托盘首项为准。
 - 托盘菜单：查看配额（含快捷键提示）、音效开关、音效组（原版 D1/D2 或小黄鸭 Ya1/Ya2）、大小预设（300/440/580）、开机自启、每轮提示、气泡自动收起、设置、本次退出挂件（下次启动 Codex 恢复）、完全退出。
-- 每轮提示与收起时长可在托盘或设置窗口调整：`turnNotice`、`turnSeconds`、`hideSeconds`、`autoClose` 都写在 `overlay.json`。
+- 每轮提示在会话日志写完后约 1.5–2 秒弹出（悬浮层用 `ReadDirectoryChangesW` 监听 `sessions` 目录，5 秒轮询只作兜底）；与收起时长可在托盘或设置窗口调整：`turnNotice`、`turnSeconds`、`hideSeconds`、`autoClose` 都写在 `overlay.json`。
 - 配置在 `%LOCALAPPDATA%\Codex\api-balance-whale\overlay.json`；设置窗口保存后会立刻刷新运行中的悬浮层。改配置请用设置窗口或托盘，不要手写计划任务或直接改 marketplace。
 
 ## 排障
 
 - 悬浮层没出现：确认 Codex 正在运行、`.\status.ps1` 有进程、自启开关状态正常；必要时手动运行 `--overlay`。
 - 一直显示“暂无数据”：本机会话日志里还没有 `rate_limits`（例如 API key 模式或日志被清理），这是预期结果，不要编造配额。
-- 首次冷启动需要扫描近期归档日志，读数会慢一些；5 秒轮询属于正常开销。
+- 首次冷启动需要扫描近期归档日志，读数会慢一些；之后靠目录监听即时刷新，5 秒轮询只是兜底，待机 CPU 开销可以忽略。
 - 需要截图验证时，普通 `BitBlt` 抓不到分层窗口，必须带 `CAPTUREBLT`。
 - 排错日志：设置环境变量 `WHALE_OVERLAY_DEBUG=<日志路径>` 后重启悬浮层。
 
