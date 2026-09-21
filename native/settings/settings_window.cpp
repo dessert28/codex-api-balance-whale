@@ -2,6 +2,7 @@
 #include "settings_window.hpp"
 #include "../core/autostart.hpp"
 #include "../core/quotes.hpp"
+#include "../core/task_end.hpp"
 #include "../overlay/desktop_overlay.hpp"
 
 #include <gdiplus.h>
@@ -25,7 +26,7 @@ using namespace Gdiplus;
 
 constexpr wchar_t kSettingsClass[] = L"ApiBalanceWhaleSettingsWindow";
 constexpr int kClientWidth = 520;
-constexpr int kClientHeight = 640;
+constexpr int kClientHeight = 744;
 constexpr int kRowHeight = 52;
 constexpr int kMargin = 24;
 constexpr int kButtonWidth = 44;
@@ -54,6 +55,8 @@ enum class Hotspot {
     TurnUp,
     AutoClose,
     AutoStart,
+    TurnSound,
+    TurnSoundSet,
     Save,
     ResetPosition,
     Close,
@@ -72,6 +75,7 @@ struct SettingsState {
     // Raw `quotes` array kept verbatim: the quote editor owns its shape, and this
     // window must not wipe it when it rewrites the shared config file.
     std::string quotes;
+    TaskEndSound taskEnd;
 };
 
 std::string ReadAll(const std::filesystem::path& path) {
@@ -109,6 +113,9 @@ SettingsState LoadState(const std::filesystem::path& configPath) {
     std::size_t quotesBegin = 0;
     std::size_t quotesEnd = 0;
     if (FindQuoteSpan(text, quotesBegin, quotesEnd)) state.quotes = text.substr(quotesBegin, quotesEnd - quotesBegin);
+    std::size_t taskEndBegin = 0;
+    std::size_t taskEndEnd = 0;
+    if (FindTaskEndSpan(text, taskEndBegin, taskEndEnd)) state.taskEnd = ParseTaskEndJson(text);
     return state;
 }
 
@@ -128,6 +135,7 @@ bool SaveState(const std::filesystem::path& configPath, const SettingsState& sta
            << ",\"turnSeconds\":" << state.turnSeconds
            << ",\"turnNotice\":" << (state.turnNotice ? 1 : 0)
            << ",\"autoClose\":" << (state.autoClose ? 1 : 0);
+    output << ",\"taskEnd\":" << TaskEndJson(state.taskEnd);
     if (keepPosition && state.x != INT_MIN && state.y != INT_MIN) {
         output << ",\"x\":" << state.x << ",\"y\":" << state.y;
     }
@@ -250,6 +258,8 @@ private:
         if (inside(PlusRect(5))) return Hotspot::TurnUp;
         if (inside(ToggleRect(6))) return Hotspot::AutoClose;
         if (inside(ToggleRect(7))) return Hotspot::AutoStart;
+        if (inside(ToggleRect(8))) return Hotspot::TurnSound;
+        if (inside(ToggleRect(9))) return Hotspot::TurnSoundSet;
         if (inside(ActionRect(0))) return Hotspot::Save;
         if (inside(ActionRect(1))) return Hotspot::ResetPosition;
         if (inside(ActionRect(2))) return Hotspot::Close;
@@ -334,6 +344,12 @@ private:
         DrawLabel(graphics, 7, L"开机自启");
         DrawButton(graphics, ToggleRect(7), m_autoStart ? L"开" : L"关", m_autoStart);
 
+        DrawLabel(graphics, 8, L"每轮提示音");
+        DrawButton(graphics, ToggleRect(8), m_state.taskEnd.on ? L"开" : L"关", m_state.taskEnd.on);
+
+        DrawLabel(graphics, 9, L"提示音");
+        DrawButton(graphics, ToggleRect(9), TaskEndPresetLabel(m_state.taskEnd.sel), false);
+
         const auto actions = ActionRect(0);
         graphics.DrawString(L"每轮提示显示本轮模型与 token；配额气泡固定 10 秒，普通气泡用气泡时长。", -1, &noteFont,
                             PointF(static_cast<REAL>(kMargin), static_cast<REAL>(actions.top) - 30.0f), nullptr, &mutedBrush);
@@ -387,6 +403,12 @@ private:
             break;
         case Hotspot::AutoStart:
             m_autoStart = !m_autoStart;
+            break;
+        case Hotspot::TurnSound:
+            m_state.taskEnd.on = !m_state.taskEnd.on;
+            break;
+        case Hotspot::TurnSoundSet:
+            m_state.taskEnd.sel = NextTaskEndPreset(m_state.taskEnd.sel);
             break;
         case Hotspot::Save: {
             std::wstring error;

@@ -48,12 +48,12 @@ bool AudioPlayer::Play(const std::filesystem::path& file) {
     return mciSendStringA(("play " + m_alias).c_str(), nullptr, 0, nullptr) == 0;
 }
 
-void AudioPlayer::PlayPress(int set) {
-    Play(Resolve(set, true));
+bool AudioPlayer::PlayPress(int set) {
+    return Play(Resolve(set, true));
 }
 
-void AudioPlayer::PlayRelease(int set) {
-    Play(Resolve(set, false));
+bool AudioPlayer::PlayRelease(int set) {
+    return Play(Resolve(set, false));
 }
 
 } // namespace whale

@@ -12,14 +12,23 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class K {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll", CharSet=CharSet.Unicode, EntryPoint="SendMessageW")] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
+  [DllImport("user32.dll")] public static extern bool GetMenuItemRect(IntPtr hwnd, IntPtr menu, uint item, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out RECT point);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
 }
 "@
+# The menu rectangles are physical pixels on a per-monitor aware process; without
+# this the click would land at 1/1.5 of the intended position.
+[void][K]::SetProcessDpiAwarenessContext([IntPtr](-4))
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $root 'native\bin\Release\api-balance-whale.exe'
 $failures = 0
@@ -56,9 +65,10 @@ function Wait-Overlay {
   return [IntPtr]::Zero
 }
 
-# Opens the tray menu on demand and picks an entry with the keyboard. The entry
-# is addressed by label, not by a fixed number of Down presses: adding an item to
-# the menu in desktop_overlay.cpp used to shift every hardcoded index.
+# Opens the tray menu on demand and picks an entry by label. The entry is clicked
+# at its own menu rectangle: the keyboard route needs one Down press per *visible*
+# item while the menu index space also holds separators, so any hardcoded or
+# counted offset breaks as soon as the menu in desktop_overlay.cpp changes.
 function Invoke-TrayLabel([IntPtr]$hwnd, [string]$label) {
   [void][K]::PostMessage($hwnd, 0x8000 + 2, [IntPtr]$hwnd, [IntPtr]0x0205)
   Start-Sleep -Milliseconds 900
@@ -66,18 +76,40 @@ function Invoke-TrayLabel([IntPtr]$hwnd, [string]$label) {
   if ($menuWnd -eq [IntPtr]::Zero) { throw 'tray menu did not open' }
   $menu = [K]::SendMessage($menuWnd, 0x01E1, [IntPtr]::Zero, [IntPtr]::Zero)
   $labels = @()
+  $target = -1
   for ($i = 0; $i -lt [K]::GetMenuItemCount($menu); $i++) {
     $sb = New-Object System.Text.StringBuilder 160
     [void][K]::GetMenuString($menu, [uint32]$i, $sb, 160, 0x400)
-    # Separators have no text and the keyboard skips them.
-    if ($sb.Length -gt 0) { $labels += $sb.ToString() }
+    $text = $sb.ToString()
+    # Separators have no text.
+    if ($text.Length -eq 0) { continue }
+    $labels += $text
+    if ($target -lt 0 -and $text -like "$label*") { $target = $i }
   }
-  $index = -1
-  for ($i = 0; $i -lt $labels.Count; $i++) {
-    if ($labels[$i] -like "$label*") { $index = $i; break }
+  if ($target -lt 0) { throw "tray item missing: $label (have: $($labels -join ' | '))" }
+  $rect = New-Object K+RECT
+  if ([K]::GetMenuItemRect($menuWnd, $menu, [uint32]$target, [ref]$rect)) {
+    $x = [int](($rect.Left + $rect.Right) / 2)
+    $y = [int](($rect.Top + $rect.Bottom) / 2)
+    # Clicking needs the real pointer, so put it back where the user left it.
+    $before = New-Object K+RECT
+    [void][K]::GetCursorPos([ref]$before)
+    [void][K]::SetCursorPos($x, $y)
+    Start-Sleep -Milliseconds 150
+    [K]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 80
+    [K]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 1200
+    [void][K]::SetCursorPos($before.Left, $before.Top)
+    return
   }
-  if ($index -lt 0) { throw "tray item missing: $label (have: $($labels -join ' | '))" }
-  for ($i = 0; $i -le $index; $i++) {
+  # Fallback: walk the visible items with the keyboard.
+  $visible = 0
+  foreach ($text in $labels) {
+    ++$visible
+    if ($text -like "$label*") { break }
+  }
+  for ($i = 0; $i -lt $visible; $i++) {
     [K]::keybd_event(0x28, 0, 0, [UIntPtr]::Zero)
     [K]::keybd_event(0x28, 0, 2, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds 120

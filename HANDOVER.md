@@ -9,7 +9,7 @@
 | 本地路径（这台机器） | `D:\project\githubclone\codex-marketplace\plugins\api-balance-whale` |
 | 你的远端 | `git@github.com:dessert28/codex-api-balance-whale.git`（分支 `main`）。在 `D:\project\githubclone\codex-api-balance-whale` 这个 clone 里它的名字是 `origin` |
 | 上游远端 | `https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget.git`（分支 `For-Codex`）。新 clone 默认不配置它，需要对上游取经时自己 `git remote add upstream` 再加 |
-| 版本 | `0.3.3+codex.<时间戳>`（`.codex-plugin/plugin.json`，每次重装前用脚本更新） |
+| 版本 | `0.3.4+codex.<时间戳>`（`.codex-plugin/plugin.json`，每次重装前用脚本更新） |
 | 运行形态 | 单一 C++ 程序 `native\bin\Release\api-balance-whale.exe`，纯 Win32 + GDI+，无 Node / Electron / Windows App SDK |
 | 本地 marketplace | `D:\project\githubclone\codex-marketplace`（名字 `personal`） |
 | 插件安装缓存 | `C:\Users\<你>\.codex\plugins\cache\personal\api-balance-whale\<版本>` |
@@ -70,7 +70,9 @@ native 目录：
 | `core\usage_snapshot.cpp` | 只读 `%CODEX_HOME%\sessions` + `archived_sessions`，算配额与 token |
 | `core\usage_monitor.cpp` | 每轮新增 token 的去重与提示 |
 | `core\quotes.cpp` | 随机语句：`quotes` 的 JSON 读写、`权重\|文本` 解析、按权重抽取并避开上一条 |
-| `core\audio.cpp` | MCI 播放 mp3（`D1/D2` 原版、`Ya1/Ya2` 小黄鸭） |
+| `core\task_end.cpp` | 每轮提示音：`taskEnd` 的 JSON 读写、上游 `preset:<组>:<按下\|松开>` 的解析与轮换 |
+| `core\json_span.cpp` | 通用 JSON 取值区间查找与替换，给「多个写入方共用一个配置文件」兜底 |
+| `core\audio.cpp` | MCI 播放 mp3（`D1/D2` 原版、`Ya1/Ya2` 小黄鸭）；`PlayPress` / `PlayRelease` 返回是否真的播上 |
 | `core\autostart.cpp` | 开机自启：Run 键与计划任务互斥管理 |
 | `core\bubble_policy.hpp` | 每类气泡的收起时长策略：配额 10 秒、普通气泡 `hideSeconds`、每轮提示 `turnSeconds`，`autoClose=0` 表示常驻 |
 | `core\session_watcher.cpp` | `ReadDirectoryChangesW` 递归监听 `sessions` 目录（去抖 1.5 秒），日志一写完就让悬浮层重算，每轮提示因此能在约 2 秒内出现 |
@@ -81,7 +83,7 @@ native 目录：
 
 | 内容 | 路径 / 名称 |
 | --- | --- |
-| 悬浮层与设置 | `%LOCALAPPDATA%\Codex\api-balance-whale\overlay.json`（`size` / `x` / `y` / `sound` / `soundSet` / `hideSeconds` / `turnSeconds` / `autoClose` / `turnNotice` / `quotes`） |
+| 悬浮层与设置 | `%LOCALAPPDATA%\Codex\api-balance-whale\overlay.json`（`size` / `x` / `y` / `sound` / `soundSet` / `hideSeconds` / `turnSeconds` / `autoClose` / `turnNotice` / `taskEnd` / `quotes`） |
 | 用量缓存 | `%LOCALAPPDATA%\Codex\api-balance-whale\usage-cache.json` |
 | Codex 会话日志（只读） | `%CODEX_HOME%\sessions`、`%CODEX_HOME%\archived_sessions` |
 | 登录自启（install.ps1） | 计划任务 `Codex API Balance Whale` |
@@ -89,7 +91,7 @@ native 目录：
 | 单实例互斥量 | `Local\ApiBalanceWhaleOverlayInstance`、`Local\ApiBalanceWhaleSupervisorInstance` |
 | “完全退出”事件 | 命名事件 `Local\ApiBalanceWhaleSupervisorStop`（悬浮层置位，supervisor 收到后一起退出） |
 
-设置项含义：`size` 悬浮层边长（物理像素，200–900）、`sound` 点击音效开关、`soundSet` 0 原版 / 1 小黄鸭、`hideSeconds` 随机语句收起秒数（默认 5，范围 3–120）、`turnSeconds` 每轮提示收起秒数（默认 6，对齐上游 `ttlSec`）、`autoClose` 0 = 不自动收起、`turnNotice` 0 = 关闭每轮提示、`quotes` 是加权随机语句数组（`[{"t":"文本","w":权重}]`，缺省或为空时回落到内置 10 条）。
+设置项含义：`size` 悬浮层边长（物理像素，200–900）、`sound` 点击音效开关、`soundSet` 0 原版 / 1 小黄鸭、`hideSeconds` 随机语句收起秒数（默认 5，范围 3–120）、`turnSeconds` 每轮提示收起秒数（默认 6，对齐上游 `ttlSec`）、`autoClose` 0 = 不自动收起、`turnNotice` 0 = 关闭每轮提示、`taskEnd` 是每轮提示音（`{"on":0|1,"sel":"preset:<duck|fx1>:<press|release>"}`，与上游 `usageSet.taskEnd` 同形，默认 `on:0`）、`quotes` 是加权随机语句数组（`[{"t":"文本","w":权重}]`，缺省或为空时回落到内置 10 条）。
 
 ## 5. 交互与行为（当前实现）
 
@@ -97,9 +99,10 @@ native 目录：
 - 点气泡：把配额卡片换成随机语句（随机语句按 `hideSeconds` 收起）；再点随机语句或右键即收起（对齐上游 `showRandomBubbleAfterQuota` / `bubbleNext`）。语句按 `w` 加权随机，并最多重试 6 次避开上一条（对齐上游 `bubblePickLine` 的 `avoidIdx`）。
 - 随机语句可编辑：托盘「随机语句…」或 `--quotes` 打开编辑器，一行一条 `权重|文本`（省略权重即 1，范围 1–99，空行忽略，非数字前缀时 `|` 算正文）；保存只替换 `quotes` 字段，随后通知悬浮层热重载。
 - 每轮 Codex 对话结束提示一次「模型 + 本轮 token + 两行配额」，按 `turnSeconds` 收起；`turnNotice=0` 时完全不弹。日志写入后约 1.5–2 秒弹出（目录监听 + 1.5 秒去抖），5 秒轮询只作兜底。
+- 每轮提示音（对齐上游 `usageSet.taskEnd = {on, sel}`）：本轮对话一被监控到就先按 `sel` 播放，再决定要不要弹提示气泡；`sel` 是 `preset:<duck|fx1>:<press|release>`（小黄鸭 `duck` → `Ya1/Ya2`，音效1 `fx1` → `D1/D2`），空值或上游的 `grp:` / `frag:` 会回落到默认的 `preset:duck:press`；`taskEnd.on` 与全局“音效”任一关闭就不响。托盘“每轮提示音”是开关，“提示音：…”点一下换下一个预设；设置窗口里也能改这两项。
 - 全局快捷键默认 `Ctrl+Alt+W` 显示/收起配额卡片；注册失败（被别的程序占用）自动改用 `Ctrl+Shift+W`，托盘首项显示实际绑定。
 - 拖拽移动，靠近工作区边缘 24px 自动吸附；位置写入 `overlay.json`。
-- 托盘：查看配额（含快捷键提示）、音效、音效组、大小预设（300/440/580）、开机自启、每轮提示、气泡自动收起、设置、「随机语句…」、「本次退出挂件（下次启动 Codex 恢复）」、「完全退出」；双击托盘图标显示配额。
+- 托盘：查看配额（含快捷键提示）、音效、音效组、大小预设（300/440/580）、开机自启、每轮提示、每轮提示音、提示音：…、气泡自动收起、设置、「随机语句…」、「本次退出挂件（下次启动 Codex 恢复）」、「完全退出」；双击托盘图标显示配额。
 - 悬浮层只在 Codex 运行期间存在（由 `--supervisor` 托管）；「本次退出挂件」只关窗口，supervisor 继续待命，Codex 重启后自动恢复；「完全退出」会连 supervisor 一起结束。
 - 透明区域点击穿透，只有鲸鱼与气泡区域可交互；窗口始终置顶覆盖普通应用。
 
@@ -128,9 +131,10 @@ cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /st
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_policy_tests.cpp /Fe:native\tests\bubble_policy_tests.exe && native\tests\bubble_policy_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\session_watcher_tests.cpp native\core\session_watcher.cpp /Fe:native\tests\session_watcher_tests.exe && native\tests\session_watcher_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\quote_tests.cpp native\core\quotes.cpp /Fe:native\tests\quote_tests.exe && native\tests\quote_tests.exe"
+cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\task_end_tests.cpp native\core\task_end.cpp native\core\json_span.cpp /Fe:native\tests\task_end_tests.exe && native\tests\task_end_tests.exe"
 
 # 端到端回归（需要先编译 Release；截图与临时日志落在 qa-output\，不入库）
-powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 26 项：交互、气泡时长、托盘、每轮提示延迟、随机语句与编辑器
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 33 项：交互、气泡时长、托盘、每轮提示延迟、每轮提示音、随机语句与编辑器
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-supervisor.ps1  # 7 项：托管与两种退出
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-live.ps1        # 4 项：真实会话目录下的启动、待机 CPU、干净退出
 
@@ -186,6 +190,15 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 - 新增 `native\tests\quote_tests.cpp`：解析/格式化往返、权重 clamp、JSON 往返（含引号、反斜杠、换行、非 ASCII）、`SetQuoteJson` 的追加与替换、加权分布、避重复、空集合。
 - Release x64 编译无错误无警告。
 
+第五轮（本次改动，`qa\verify-parity.ps1` 33 项 + `qa\verify-supervisor.ps1` 7 项 + `qa\verify-live.ps1` 4 项 + 6 个单元测试，全部 PASS）：
+
+- 每轮提示音落地：新增 `core\task_end.cpp`（`taskEnd` JSON、上游 `preset:<组>:<按下|松开>` 解析、托盘轮换）与 `core\json_span.cpp`（通用的取值区间查找/替换，`quotes` 也改用它）；托盘加“每轮提示音”“提示音：…”，设置窗口加同名的两行（窗口高度 640 → 744），音频层 `PlayPress` / `PlayRelease` 改为返回是否真的播上。
+- 脚本实测：`{"on":1,"sel":"preset:duck:release"}` + 音效开 → 日志 `turn sound sel=preset:duck:release label=小黄鸭·松开 set=1 press=0 played=1`；音效关 → `turn sound skipped (sound off)`；`on:0` → `turn sound skipped (taskEnd off)`。`played=1` 说明 MCI 真的打开了音轨，不是只走了代码路径。
+- 三个写入方共用 `overlay.json` 互不覆盖：拖拽回写、随机语句编辑器保存之后，`taskEnd` 与 `quotes` 都还在（脚本各查一遍）。
+- 新增 `native\tests\task_end_tests.cpp`：预设表与顺序、标签、`duck`/`fx1` → `Ya*`/`D*` 的映射、未知 `sel` 回落、托盘轮换的回绕、`on:true` 与 `on:1` 两种写法、JSON 往返（含引号与反斜杠）、span 原样搬运。
+- 顺手修掉：`qa\verify-parity.ps1` 读调试日志没带 `-Encoding UTF8`，中文标签在 PowerShell 5.1 下被按 GBK 解成乱码（日志文件本身是对的）。
+- Release x64 编译无错误无警告。
+
 ## 8. 尚未实现 / 与上游原版差异
 
 功能缺口（上游有、这里没有）：
@@ -204,6 +217,7 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 4. 气泡内文字大小：上游用固定字号（`dshwv-label` 66 单位等），这里按气泡内可用宽度自动收缩。
 5. 每轮提示延迟：上游用 `fs.watch` 秒级反应；这里改成 `ReadDirectoryChangesW` 监听 + 1.5 秒去抖，实测约 1.6 秒，已对齐。
 6. 手感：上游气泡是 DOM 弹性动画（`cubic-bezier` 缩放淡入），这里分层窗口直接贴位，没有入场动画。
+7. 每轮提示音触发条件：上游只在本轮账本判定为成功（`notice.completionKind === 'success'`）时播；这里没有账本，监控到“新的一轮”就播，分不出失败轮次。音源也只有 `preset:` 那四种，`grp:` / `frag:` 会回落到默认预设。
 
 有意保留的边界：只监测本机 Codex 会话（不监测 ChatGPT 网页端）；只覆盖主显示器工作区，不覆盖全屏独占游戏与 UAC 安全桌面；首次冷启动需要扫描近期归档日志。
 
@@ -222,6 +236,7 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 11. **`ReadDirectoryChangesW` 的目录句柄必须带 `FILE_FLAG_OVERLAPPED`**：否则完成事件永远不置位，`GetOverlappedResult(..., TRUE)` 会永久阻塞（本次踩过一次：测试进程 0 CPU 卡死）。现在 `session_watcher.cpp` 用 `FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED` 打开，等待上限 500 毫秒 + `CancelIoEx`，保证 `Stop()` 立刻返回。
 12. **`Start-Process -WindowStyle Hidden` 会吃掉窗口的第一次 `ShowWindow`**：`STARTUPINFO.wShowWindow = SW_HIDE` 一旦生效，程序之后自己调 `ShowWindow(SW_SHOW)` 也救不回来，窗口永远不可见、`MainWindowHandle` 一直是 0。测 `--quotes` 编辑器时踩到过（`verify-parity.ps1` 里那行已经去掉 `-WindowStyle Hidden`）；悬浮层不受影响，因为它用 `UpdateLayeredWindow` + `WS_VISIBLE` 建窗口。
 13. **跨进程 `SendMessage` 必须钉住 Unicode 入口**：`[DllImport("user32.dll")]` 不带 `CharSet` 会解析到 `SendMessageA`，它跨进程时按 ANSI 解释字符串指针，UTF-16 载荷在第一个 NUL 处被截断——`5|QA EDITOR LINE` 落到编辑器里只剩 `5`，保存出来就是一条 `{"t":"5","w":1}`。P/Invoke 要写 `CharSet=CharSet.Unicode, EntryPoint="SendMessageW"`。另外 `WM_GETTEXT` / `GetWindowTextLength` 跨进程读不到别的进程 Edit 的内容，别拿它做断言。
+14. **Windows PowerShell 读日志要带 `-Encoding UTF8`**：调试日志是 UTF-8（`std::ofstream` + `WideToUtf8`），但 `Get-Content` 在 PowerShell 5.1 里默认按 ANSI（本机 936）解码，中文会显示成 `灏忛粍楦锋澗寮€` 这种乱码——文件没错，是读的人错了。`qa\verify-parity.ps1` 里读日志的地方都已补上 `-Encoding UTF8`。
 
 ## 10. 建议的下一步（按性价比）
 
@@ -229,4 +244,3 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 2. 余额/账本（`whale_balance`、多服务商、汇率、每轮费用）——工作量大，先定存储格式。
 3. 素材库与多角色、气泡样式编辑器。
 4. 随机语句支持动态占位符（上游 `bubbleContentTokenMap` 的 `{balance_api}` 之类），现在只有纯文本。
-5. 每轮提示音：上游在每轮用量提醒前调 `playTaskEndSound`（`usageSet.taskEnd = {on, sel}`，默认 `on:false`；`sel` 可选 `preset:duck:press` / `preset:duck:release` / `preset:fx1:*` / 音效组 / 音频片段，音量 `soundVol` 默认 0.9）。原生版已有 `core\audio.cpp` 的 MCI 播放，补一个 `taskEndSound` 开关最省事。

@@ -6,6 +6,7 @@
 #include "../core/quotes.hpp"
 #include "../core/session_watcher.hpp"
 #include "../core/supervisor.hpp"
+#include "../core/task_end.hpp"
 
 #include <gdiplus.h>
 #include <shellapi.h>
@@ -66,6 +67,8 @@ constexpr UINT kTrayTurnNotice = 1009;
 constexpr UINT kTrayAutoClose = 1010;
 constexpr UINT kTrayHotkeyHint = 1011;
 constexpr UINT kTrayQuotes = 1012;
+constexpr UINT kTrayTurnSound = 1013;
+constexpr UINT kTrayTurnSoundSel = 1014;
 constexpr int kSizePresets[] = {300, 440, 580};
 
 struct HotkeyChoice {
@@ -389,6 +392,9 @@ private:
         m_policy.autoClose = ReadJsonInt(text, "autoClose", m_policy.autoClose ? 1 : 0) != 0;
         m_turnNotice = ReadJsonInt(text, "turnNotice", m_turnNotice ? 1 : 0) != 0;
         if (const auto quotes = ParseQuoteJson(text); !quotes.empty()) m_quotes = quotes;
+        std::size_t taskEndBegin = 0;
+        std::size_t taskEndEnd = 0;
+        if (FindTaskEndSpan(text, taskEndBegin, taskEndEnd)) m_taskEnd = ParseTaskEndJson(text);
         m_soundEnabled = m_options.soundEnabled;
         m_soundSet = m_options.soundSet;
         const int x = ReadJsonInt(text, "x", INT_MIN);
@@ -417,6 +423,7 @@ private:
                << ",\"turnSeconds\":" << m_policy.turnSeconds
                << ",\"autoClose\":" << (m_policy.autoClose ? 1 : 0)
                << ",\"turnNotice\":" << (m_turnNotice ? 1 : 0)
+               << ",\"taskEnd\":" << TaskEndJson(m_taskEnd)
                << ",\"quotes\":" << QuoteJson(m_quotes) << "}\n";
     }
 
@@ -622,6 +629,9 @@ private:
         m_snapshot = snapshot;
         m_hasSnapshot = true;
         if (const auto turn = m_monitor.Update(m_snapshot)) {
+            // Upstream plays the turn-end sound as soon as a turn is seen, whether
+            // or not the notice bubble itself is enabled.
+            PlayTaskEndSound();
             if (m_turnNotice) {
                 ShowTurnNotice(*turn);
                 return;
@@ -676,6 +686,30 @@ private:
         ArmHideTimer(BubbleKind::Turn);
         Render();
         Present();
+    }
+
+    // Mirrors upstream `playTaskEndSound`: silent unless `taskEnd.on` is set, the
+    // global 音效 switch is on, and the stored selection is a preset we can play.
+    void PlayTaskEndSound() {
+        if (!m_taskEnd.on) {
+            DebugLog(L"turn sound skipped (taskEnd off)");
+            return;
+        }
+        if (!m_soundEnabled || !m_audio) {
+            DebugLog(L"turn sound skipped (sound off)");
+            return;
+        }
+        int set = 0;
+        bool press = false;
+        // Upstream stays silent when the stored selection has no playable url, and
+        // its picker rewrites unknown ids to the default preset.
+        if (!ParseTaskEndPreset(TaskEndEffectivePreset(m_taskEnd.sel), set, press)) return;
+        const bool played = press ? m_audio->PlayPress(set) : m_audio->PlayRelease(set);
+        std::wostringstream log;
+        log << L"turn sound sel=" << Utf8ToWide(TaskEndEffectivePreset(m_taskEnd.sel)) << L" label="
+            << TaskEndPresetLabel(m_taskEnd.sel) << L" set=" << set << L" press=" << (press ? 1 : 0)
+            << L" played=" << (played ? 1 : 0);
+        DebugLog(log.str());
     }
 
     void HideBubble() {
@@ -782,6 +816,9 @@ private:
         AppendMenuW(menu, MF_STRING, kTraySize, sizeLabel.str().c_str());
         AppendMenuW(menu, MF_STRING | (whale::IsAutoStartEnabled() ? MF_CHECKED : 0), kTrayAutoStart, L"开机自启");
         AppendMenuW(menu, MF_STRING | (m_turnNotice ? MF_CHECKED : 0), kTrayTurnNotice, L"每轮提示");
+        AppendMenuW(menu, MF_STRING | (m_taskEnd.on ? MF_CHECKED : 0), kTrayTurnSound, L"每轮提示音");
+        const std::wstring turnSoundLabel = L"提示音：" + TaskEndPresetLabel(m_taskEnd.sel);
+        AppendMenuW(menu, MF_STRING, kTrayTurnSoundSel, turnSoundLabel.c_str());
         AppendMenuW(menu, MF_STRING | (m_policy.autoClose ? MF_CHECKED : 0), kTrayAutoClose, L"气泡自动收起");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kTraySettings, L"设置…");
@@ -837,6 +874,14 @@ private:
             break;
         case kTrayTurnNotice:
             m_turnNotice = !m_turnNotice;
+            SaveConfig();
+            break;
+        case kTrayTurnSound:
+            m_taskEnd.on = !m_taskEnd.on;
+            SaveConfig();
+            break;
+        case kTrayTurnSoundSel:
+            m_taskEnd.sel = NextTaskEndPreset(m_taskEnd.sel);
             SaveConfig();
             break;
         case kTrayAutoClose:
@@ -1123,6 +1168,7 @@ private:
     std::vector<QuoteLine> m_quotes{DefaultQuotes()};
     std::size_t m_quoteIndex{(std::numeric_limits<std::size_t>::max)()};
     std::mt19937 m_generator{std::random_device{}()};
+    TaskEndSound m_taskEnd;
     bool m_hasSnapshot{false};
     std::atomic_bool m_scanInFlight{false};
     std::atomic_bool m_scanQueued{false};

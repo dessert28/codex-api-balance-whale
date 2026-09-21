@@ -156,7 +156,9 @@ $whaleX = [int]($size * 0.70); $bubbleX = [int]($size * 0.4426); $bubbleY = [int
 $shot = Shot $hwnd
 $idle = BubblePixels $shot; Save-Shot $shot 'shot-idle.png'; $shot.Bitmap.Dispose()
 
-$debug = Get-Content -LiteralPath $log -Raw
+# The overlay writes its log as UTF-8; Windows PowerShell would otherwise decode
+# it as the ANSI code page and print the Chinese labels as mojibake.
+$debug = Get-Content -LiteralPath $log -Raw -Encoding UTF8
 $hotkey = ([regex]'hotkey (\S+) registered').Match($debug)
 Check 'global hotkey registered' $hotkey.Success ("log: " + ($debug -replace "`r?`n", ' | '))
 
@@ -241,6 +243,8 @@ Start-Sleep -Milliseconds 80
 Start-Sleep -Milliseconds 500
 $config = (Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'Codex\api-balance-whale\overlay.json') -Raw -Encoding UTF8).Trim()
 Check 'config keeps new tuning keys' ($config -match 'turnSeconds' -and $config -match 'autoClose' -and $config -match 'turnNotice') $config
+# The overlay owns the turn-end sound too, so a rewrite has to emit it.
+Check 'config gains the turn end sound' ($config -match '"taskEnd":\{"on":0,"sel":""\}') $config
 
 # ---------------------------------------------------------------- stage 2
 [void][Win]::PostMessage($hwnd, 0x8000 + 2, [IntPtr]$hwnd, [IntPtr]0x0205)
@@ -264,13 +268,17 @@ Check 'tray has session exit' ($joined -match '本次退出挂件') $joined
 Check 'tray has full exit' ($joined -match '完全退出') $joined
 Check 'tray has turn notice toggle' ($joined -match '每轮提示') $joined
 Check 'tray has auto close toggle' ($joined -match '气泡自动收起') $joined
+Check 'tray has turn sound toggle' ($joined -match '每轮提示音') $joined
+Check 'tray has turn sound picker' ($joined -match '提示音：小黄鸭·按下') $joined
 Stop-Overlay
 
 # ---------------------------------------------------------------- stage 3
-function Invoke-TurnNotice([int]$turnNotice, [string]$tag) {
+function Invoke-TurnNotice([int]$turnNotice, [string]$tag, [string]$taskEnd = '', [int]$sound = 0) {
   $dir = Join-Path $artifacts $tag
   Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
-  Write-Config $dir ("{`"size`":440,`"sound`":0,`"soundSet`":0,`"hideSeconds`":5,`"turnSeconds`":6,`"autoClose`":1,`"turnNotice`":$turnNotice}")
+  $configJson = "{`"size`":440,`"sound`":$sound,`"soundSet`":0,`"hideSeconds`":5,`"turnSeconds`":6,`"autoClose`":1,`"turnNotice`":$turnNotice"
+  if ($taskEnd) { $configJson += ",`"taskEnd`":$taskEnd" }
+  Write-Config $dir ($configJson + '}')
   $codexHome = Join-Path $dir 'codex'
   $sessionDir = Join-Path $codexHome 'sessions\2026\09\21'
   New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null
@@ -304,9 +312,12 @@ function Invoke-TurnNotice([int]$turnNotice, [string]$tag) {
     }
     $shot.Bitmap.Dispose()
   }
+  # The debug log is wiped by the next Start-Overlay, so capture it here: it is
+  # what proves whether the turn-end sound actually fired.
+  $turnLog = Get-Content -LiteralPath $log -Raw -Encoding UTF8
   Stop-Overlay
   Remove-Item Env:\LOCALAPPDATA, Env:\CODEX_HOME -ErrorAction SilentlyContinue
-  @{ Baseline = $baseline; Peak = $peak; Latency = $latency }
+  @{ Baseline = $baseline; Peak = $peak; Latency = $latency; Log = $turnLog }
 }
 
 $on = Invoke-TurnNotice 1 'notice-on'
@@ -315,12 +326,27 @@ Check 'turn notice arrives within 7 s' ($null -ne $on.Latency -and $on.Latency -
 $off = Invoke-TurnNotice 0 'notice-off'
 Check 'turn notice suppressed when disabled' ($off.Peak -le ($off.Baseline + 200)) ("baseline=$($off.Baseline) peak=$($off.Peak)")
 
+# The turn-end sound is upstream `taskEnd = {on, sel}`: it fires on a fresh turn,
+# needs the global 音效 switch on, and stays silent while `on` is false. The log
+# line carries the clip that MCI actually started, so a silent no-op cannot pass.
+$snd = Invoke-TurnNotice 0 'turn-sound' '{"on":1,"sel":"preset:duck:release"}' 1
+$sndLine = ([regex]'turn sound [^\r\n]*').Match($snd.Log)
+Check 'turn sound plays on a new turn' ($sndLine.Value -match 'sel=preset:duck:release' -and $sndLine.Value -match 'played=1') $sndLine.Value
+
+$muted = Invoke-TurnNotice 0 'turn-sound-muted' '{"on":1,"sel":"preset:duck:release"}' 0
+$mutedLine = ([regex]'turn sound [^\r\n]*').Match($muted.Log)
+Check 'turn sound follows the 音效 switch' ($mutedLine.Value -match 'skipped \(sound off\)') $mutedLine.Value
+
+$quiet = Invoke-TurnNotice 0 'turn-sound-off' '{"on":0,"sel":"preset:fx1:press"}' 1
+$quietLine = ([regex]'turn sound [^\r\n]*').Match($quiet.Log)
+Check 'turn sound stays silent when off' ($quietLine.Value -match 'skipped \(taskEnd off\)') $quietLine.Value
+
 # ---------------------------------------------------------------- stage 4
 # The random line set is editable and weighted, and the tray editor writes it
 # back into overlay.json (which the overlay reloads right away).
 $quoteDir = Join-Path $artifacts 'quotes'
 Remove-Item $quoteDir -Recurse -Force -ErrorAction SilentlyContinue
-Write-Config $quoteDir '{"size":440,"sound":0,"soundSet":0,"hideSeconds":30,"turnSeconds":6,"autoClose":1,"turnNotice":0,"quotes":[{"t":"QA QUOTE ALPHA","w":1},{"t":"QA QUOTE BETA","w":9}]}'
+Write-Config $quoteDir '{"size":440,"sound":0,"soundSet":0,"hideSeconds":30,"turnSeconds":6,"autoClose":1,"turnNotice":0,"taskEnd":{"on":1,"sel":"preset:fx1:press"},"quotes":[{"t":"QA QUOTE ALPHA","w":1},{"t":"QA QUOTE BETA","w":9}]}'
 $configPath = Join-Path $quoteDir 'Codex\api-balance-whale\overlay.json'
 $env:LOCALAPPDATA = $quoteDir
 $env:CODEX_HOME = Join-Path $quoteDir 'codex'
@@ -333,7 +359,7 @@ Click-Client $quoteHwnd $bubbleX $bubbleY
 Start-Sleep -Milliseconds 1200
 $quoteShot = Shot $quoteHwnd
 $quotePixels = BubblePixels $quoteShot; Save-Shot $quoteShot 'shot-quotes.png'; $quoteShot.Bitmap.Dispose()
-$quoteLog = Get-Content -LiteralPath $log -Raw
+$quoteLog = Get-Content -LiteralPath $log -Raw -Encoding UTF8
 $pick = ([regex]'quote pick=\d+ of 2 weight=\d+ text=QA QUOTE \w+').Match($quoteLog)
 Check 'config quote set drives the line bubble' ($pick.Success -and $quotePixels -gt $VISIBLE) ("pixels=$quotePixels log=" + $pick.Value)
 
@@ -348,6 +374,9 @@ Start-Sleep -Milliseconds 80
 Start-Sleep -Milliseconds 600
 $kept = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8).Trim()
 Check 'overlay rewrite keeps the quote set' ($kept -match '"quotes":\[\{"t":"QA QUOTE ALPHA","w":1\},\{"t":"QA QUOTE BETA","w":9\}\]') $kept
+# The turn-end sound is a third writer into the same file: neither the overlay
+# save nor the quote editor may drop it.
+Check 'overlay rewrite keeps the turn sound' ($kept -match '"taskEnd":\{"on":1,"sel":"preset:fx1:press"\}') $kept
 
 # Opening the editor and saving straight away has to round-trip the configured
 # set; that is what proves the edit control really shows the current weighted
@@ -398,12 +427,13 @@ if ($editorWnd -ne [IntPtr]::Zero) {
     Start-Sleep -Milliseconds 900
     $saved = (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8).Trim()
     Check 'editor saves a weighted set' ($saved -match '"t":"QA EDITOR LINE","w":5' -and $saved -match '"t":"QA EDITOR SECOND","w":1') $saved
+    Check 'editor save keeps the turn sound' ($saved -match '"taskEnd":\{"on":1,"sel":"preset:fx1:press"\}') $saved
     Check 'editor closes after saving' ($null -eq (Get-Process -Id $editor.Id -ErrorAction SilentlyContinue)) "pid=$($editor.Id)"
     Click-Client $quoteHwnd $whaleX $whaleX
     Start-Sleep -Milliseconds 700
     Click-Client $quoteHwnd $bubbleX $bubbleY
     Start-Sleep -Milliseconds 1200
-    $reloaded = ([regex]'text=QA EDITOR \w+').Match((Get-Content -LiteralPath $log -Raw))
+    $reloaded = ([regex]'text=QA EDITOR \w+').Match((Get-Content -LiteralPath $log -Raw -Encoding UTF8))
     Check 'overlay reloads the edited set' $reloaded.Success $reloaded.Value
   }
 }

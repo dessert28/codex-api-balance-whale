@@ -16,8 +16,10 @@ public:
     AudioPlayer& operator=(const AudioPlayer&) = delete;
 
     // set: 0 = built-in whale sounds (D1/D2), 1 = duck sounds (Ya1/Ya2).
-    void PlayPress(int set);
-    void PlayRelease(int set);
+    // Both report false when the clip is missing or could not be started, so a
+    // caller can tell "played" from "silently did nothing".
+    bool PlayPress(int set);
+    bool PlayRelease(int set);
     bool Available(int set) const;
 
 private:

@@ -1,3 +1,4 @@
+#include "json_span.hpp"
 #include "quotes.hpp"
 
 #include <algorithm>
@@ -222,33 +223,7 @@ std::string QuoteJson(const std::vector<QuoteLine>& lines) {
 }
 
 bool FindQuoteSpan(const std::string& configText, std::size_t& begin, std::size_t& end) {
-    const std::string key = "\"quotes\"";
-    const auto keyAt = configText.find(key);
-    if (keyAt == std::string::npos) return false;
-    const auto open = configText.find('[', keyAt + key.size());
-    if (open == std::string::npos) return false;
-    int depth = 0;
-    bool inString = false;
-    for (std::size_t index = open; index < configText.size(); ++index) {
-        const char ch = configText[index];
-        if (inString) {
-            if (ch == '\\') ++index;
-            else if (ch == '"') inString = false;
-            continue;
-        }
-        if (ch == '"') {
-            inString = true;
-        } else if (ch == '[') {
-            ++depth;
-        } else if (ch == ']') {
-            if (--depth == 0) {
-                begin = open;
-                end = index + 1;
-                return true;
-            }
-        }
-    }
-    return false;
+    return FindJsonValueSpan(configText, "quotes", '[', ']', begin, end);
 }
 
 std::vector<QuoteLine> ParseQuoteJson(const std::string& configText) {
@@ -277,21 +252,7 @@ std::vector<QuoteLine> ParseQuoteJson(const std::string& configText) {
 }
 
 std::string SetQuoteJson(const std::string& configText, const std::vector<QuoteLine>& lines) {
-    const auto array = QuoteJson(lines);
-    std::size_t begin = 0;
-    std::size_t end = 0;
-    if (FindQuoteSpan(configText, begin, end)) {
-        return configText.substr(0, begin) + array + configText.substr(end);
-    }
-    const auto close = configText.rfind('}');
-    if (close == std::string::npos) return configText;
-    std::size_t insertAt = close;
-    while (insertAt > 0 && (configText[insertAt - 1] == ' ' || configText[insertAt - 1] == '\n' || configText[insertAt - 1] == '\r' || configText[insertAt - 1] == '\t')) --insertAt;
-    const std::string entry = "\"quotes\":" + array;
-    if (insertAt > 0 && configText[insertAt - 1] == '{') {
-        return configText.substr(0, insertAt) + entry + configText.substr(insertAt);
-    }
-    return configText.substr(0, insertAt) + ',' + entry + configText.substr(insertAt);
+    return SetJsonValue(configText, "quotes", QuoteJson(lines));
 }
 
 std::size_t PickQuote(const std::vector<QuoteLine>& lines, std::size_t avoid, std::mt19937& rng) {
