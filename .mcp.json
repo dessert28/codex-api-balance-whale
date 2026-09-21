@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "whale": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/runtime/mcp.mjs"]
+      "command": "${CLAUDE_PLUGIN_ROOT}/native/bin/Release/api-balance-whale.exe",
+      "args": ["--mcp"]
     }
   }
 }

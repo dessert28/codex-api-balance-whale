@@ -1,3 +1,3 @@
 @echo off
-node "%~dp0scripts\install-desktop.mjs"
-pause
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
+if errorlevel 1 pause

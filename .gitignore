@@ -2,3 +2,7 @@ node_modules/
 qa-output/
 *.log
 *.tmp
+*.obj
+native/bin/
+native/obj/
+native/tests/*.exe

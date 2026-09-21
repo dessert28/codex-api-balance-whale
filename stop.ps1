@@ -1,4 +1,3 @@
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-& node (Join-Path $root 'scripts\control.mjs') stop
-exit $LASTEXITCODE
+Get-Process -Name 'api-balance-whale' -ErrorAction SilentlyContinue |
+  Stop-Process -Force -ErrorAction SilentlyContinue

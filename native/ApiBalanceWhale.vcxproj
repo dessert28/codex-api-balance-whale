@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{B5F2D60B-3C1E-4E9B-9D1A-6D8A8D7E5C31}</ProjectGuid>
+    <RootNamespace>ApiBalanceWhale</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
+    <Keyword>Win32Proj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" />
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <OutDir>$(MSBuildThisFileDirectory)bin\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)obj\$(Configuration)\</IntDir>
+    <TargetName>api-balance-whale</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PreprocessorDefinitions>_DEBUG;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>wmainCRTStartup</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PreprocessorDefinitions>NDEBUG;UNICODE;_UNICODE;WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <Optimization>MaxSpeed</Optimization>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EntryPointSymbol>wmainCRTStartup</EntryPointSymbol>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="core\usage_snapshot.hpp" />
+    <ClInclude Include="core\usage_monitor.hpp" />
+    <ClInclude Include="core\autostart.hpp" />
+    <ClInclude Include="core\audio.hpp" />
+    <ClInclude Include="overlay\desktop_overlay.hpp" />
+    <ClInclude Include="settings\settings_window.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader></ClCompile>
+    <ClCompile Include="main.cpp"><PrecompiledHeader>Use</PrecompiledHeader></ClCompile>
+    <ClCompile Include="overlay\desktop_overlay.cpp"><PrecompiledHeader>Use</PrecompiledHeader></ClCompile>
+    <ClCompile Include="settings\settings_window.cpp"><PrecompiledHeader>Use</PrecompiledHeader></ClCompile>
+    <ClCompile Include="core\autostart.cpp"><PrecompiledHeader>Use</PrecompiledHeader></ClCompile>
+    <ClCompile Include="core\audio.cpp"><PrecompiledHeader>Use</PrecompiledHeader></ClCompile>
+    <ClCompile Include="core\usage_snapshot.cpp" />
+    <ClCompile Include="core\usage_monitor.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CopyWhaleAssets" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)assets" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\assets\DSniang1.png" DestinationFolder="$(OutDir)assets" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\assets\D1.mp3" DestinationFolder="$(OutDir)assets" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\assets\D2.mp3" DestinationFolder="$(OutDir)assets" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\assets\Ya1.mp3" DestinationFolder="$(OutDir)assets" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)..\assets\Ya2.mp3" DestinationFolder="$(OutDir)assets" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

@@ -1,3 +1,3 @@
 @echo off
-node "%~dp0scripts\control.mjs" stop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop.ps1"
 if errorlevel 1 pause
