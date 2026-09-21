@@ -3,6 +3,7 @@
 #include "../core/audio.hpp"
 #include "../core/autostart.hpp"
 #include "../core/bubble_policy.hpp"
+#include "../core/bubble_tokens.hpp"
 #include "../core/quotes.hpp"
 #include "../core/session_watcher.hpp"
 #include "../core/supervisor.hpp"
@@ -663,10 +664,14 @@ private:
         if (m_quotes.empty()) m_quotes = DefaultQuotes();
         m_quoteIndex = PickQuote(m_quotes, m_quoteIndex, m_generator);
         const auto& line = m_quotes[m_quoteIndex];
+        // Upstream expands a line's placeholders against the live snapshot right
+        // before it is drawn, so a line may read 「本周已用 {week}」.
+        const auto text = ExpandBubbleTokens(line.text, BubbleTokenValues(m_snapshot, std::chrono::system_clock::now()));
         std::wostringstream log;
-        log << L"quote pick=" << m_quoteIndex << L" of " << m_quotes.size() << L" weight=" << line.weight << L" text=" << line.text;
+        log << L"quote pick=" << m_quoteIndex << L" of " << m_quotes.size() << L" weight=" << line.weight << L" text=" << text;
+        if (text != line.text) log << L" tpl=" << line.text;
         DebugLog(log.str());
-        SetLines({line.text}, {false});
+        SetLines({text}, {false});
         m_bubble = Bubble::Quote;
         ArmHideTimer(BubbleKind::Quote);
         Render();

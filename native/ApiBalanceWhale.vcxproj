@@ -73,6 +73,7 @@
     <ClInclude Include="core\quotes.hpp" />
     <ClInclude Include="core\json_span.hpp" />
     <ClInclude Include="core\task_end.hpp" />
+    <ClInclude Include="core\bubble_tokens.hpp" />
     <ClInclude Include="settings\quote_editor.hpp" />
     <ClInclude Include="overlay\desktop_overlay.hpp" />
     <ClInclude Include="settings\settings_window.hpp" />
@@ -90,6 +91,7 @@
     <ClCompile Include="core\quotes.cpp" />
     <ClCompile Include="core\json_span.cpp" />
     <ClCompile Include="core\task_end.cpp" />
+    <ClCompile Include="core\bubble_tokens.cpp" />
     <ClCompile Include="settings\quote_editor.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,6 +1,7 @@
 #include "quote_editor.hpp"
 
 #include "../core/quotes.hpp"
+#include "../core/bubble_tokens.hpp"
 #include "../overlay/desktop_overlay.hpp"
 
 #include <windows.h>
@@ -20,13 +21,19 @@ constexpr wchar_t kQuoteHint[] =
     L"每行一条随机语句，写成「权重|文本」，例如 3|今天也要好好休息呀～\r\n"
     L"省略权重就是 1，空行忽略；权重范围 1-99。";
 
+// Same affordance as the upstream editor, which lists the usable placeholders
+// next to the line editor and substitutes them when the bubble is drawn.
+const std::wstring kQuoteTokenHint =
+    L"可用占位符：" + BubbleTokenListText() + L"\r\n写进文本会换成当下的数值，不认识的占位符原样保留。";
+
 constexpr int kIdHint = 2101;
+constexpr int kIdTokenHint = 2106;
 constexpr int kIdEdit = 2102;
 constexpr int kIdDefaults = 2103;
 constexpr int kIdCancel = 2104;
 constexpr int kIdSave = 2105;
 constexpr int kMinWidth = 440;
-constexpr int kMinHeight = 340;
+constexpr int kMinHeight = 400;
 
 std::string ReadAll(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -152,6 +159,8 @@ private:
                              L"Microsoft YaHei UI");
         m_hint = CreateWindowExW(0, L"STATIC", kQuoteHint, WS_CHILD | WS_VISIBLE | SS_LEFT,
                                  0, 0, 0, 0, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdHint)), nullptr, nullptr);
+        m_tokenHint = CreateWindowExW(0, L"STATIC", kQuoteTokenHint.c_str(), WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                      0, 0, 0, 0, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdTokenHint)), nullptr, nullptr);
         m_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
                                  0, 0, 0, 0, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdEdit)), nullptr, nullptr);
@@ -161,7 +170,7 @@ private:
                                    0, 0, 0, 0, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdCancel)), nullptr, nullptr);
         m_save = CreateWindowExW(0, L"BUTTON", L"保存", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
                                  0, 0, 0, 0, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSave)), nullptr, nullptr);
-        for (const HWND child : {m_hint, m_edit, m_defaults, m_cancel, m_save}) {
+        for (const HWND child : {m_hint, m_tokenHint, m_edit, m_defaults, m_cancel, m_save}) {
             if (child && m_font) SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(m_font), TRUE);
         }
         SetWindowTextW(m_edit, FormatQuoteText(CurrentLines()).c_str());
@@ -184,10 +193,12 @@ private:
         const int buttonWidth = static_cast<int>(92 * scale);
         const int buttonHeight = static_cast<int>(30 * scale);
         const int hintHeight = static_cast<int>(38 * scale);
+        const int tokenHintHeight = static_cast<int>(52 * scale);
         const int width = client.right - client.left;
         const int height = client.bottom - client.top;
         MoveWindow(m_hint, margin, margin, width - 2 * margin, hintHeight, TRUE);
-        const int editTop = margin + hintHeight + gap;
+        MoveWindow(m_tokenHint, margin, margin + hintHeight, width - 2 * margin, tokenHintHeight, TRUE);
+        const int editTop = margin + hintHeight + tokenHintHeight + gap;
         const int buttonsTop = height - margin - buttonHeight;
         MoveWindow(m_edit, margin, editTop, width - 2 * margin, buttonsTop - gap - editTop, TRUE);
         MoveWindow(m_defaults, margin, buttonsTop, buttonWidth, buttonHeight, TRUE);
@@ -237,6 +248,7 @@ private:
     QuoteEditorPaths m_paths;
     HWND m_hwnd{};
     HWND m_hint{};
+    HWND m_tokenHint{};
     HWND m_edit{};
     HWND m_defaults{};
     HWND m_cancel{};

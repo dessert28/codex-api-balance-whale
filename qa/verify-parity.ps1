@@ -34,6 +34,22 @@ public static class Win {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
   [DllImport("user32.dll")] public static extern int GetMenuItemCount(IntPtr menu);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetMenuString(IntPtr menu, uint item, StringBuilder text, int max, uint flags);
+  public delegate bool EnumProc(IntPtr h, IntPtr param);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr param);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder text, int max);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder text, int max);
+  // "class\u0001text" per child; FindWindowEx does not match a Static child of the
+  // quote editor on this machine, so the children are enumerated instead.
+  public static string[] ChildWindows(IntPtr parent) {
+    var found = new System.Collections.Generic.List<string>();
+    EnumChildWindows(parent, delegate(IntPtr h, IntPtr p) {
+      var cls = new StringBuilder(64); GetClassName(h, cls, 64);
+      var txt = new StringBuilder(256); GetWindowText(h, txt, 256);
+      found.Add(cls.ToString() + "\u0001" + txt.ToString());
+      return true;
+    }, IntPtr.Zero);
+    return found.ToArray();
+  }
 }
 "@
 # The harness must be per-monitor aware too, otherwise every window rectangle
@@ -57,20 +73,39 @@ function Check([string]$name, [bool]$ok, [string]$detail) {
 }
 
 function Stop-Overlay {
-  Get-Process api-balance-whale -ErrorAction SilentlyContinue | Stop-Process -Force
-  Start-Sleep -Milliseconds 500
+  # Stop-Process returns before the process is reaped, and a whale that is still
+  # dying keeps the single instance mutex: the next Start-Overlay would then hand
+  # back the old window, which answers the clicks with the old config.
+  for ($i = 0; $i -lt 40; $i++) {
+    $p = @(Get-Process api-balance-whale -ErrorAction SilentlyContinue)
+    if ($p.Count -eq 0) { break }
+    $p | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 250
+  }
+  Start-Sleep -Milliseconds 300
 }
 
 function Start-Overlay {
+  $before = @(Get-Process api-balance-whale -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
   if (Test-Path $log) { Remove-Item $log -Force }
   $env:WHALE_OVERLAY_DEBUG = $log
   Start-Process -FilePath $exe -ArgumentList '--overlay' -WorkingDirectory $root -WindowStyle Hidden | Out-Null
   for ($i = 0; $i -lt 40; $i++) {
     Start-Sleep -Milliseconds 250
-    $p = Get-Process api-balance-whale -ErrorAction SilentlyContinue
-    if ($p -and $p.MainWindowHandle -ne 0) { return $p.MainWindowHandle }
+    # Only the process started by this call counts: an older whale still on screen
+    # would answer the clicks with its own config and fake a pass.
+    foreach ($p in @(Get-Process api-balance-whale -ErrorAction SilentlyContinue)) {
+      if ($before -contains $p.Id) { continue }
+      if ($p.MainWindowHandle -ne 0) { return $p.MainWindowHandle }
+    }
   }
   throw 'overlay window did not appear'
+}
+
+# A failure detail has to say what the whale did, not just that a regex missed.
+function Log-Tail([int]$count = 3) {
+  if (-not (Test-Path -LiteralPath $log)) { return '(no log)' }
+  (@(Get-Content -LiteralPath $log -Encoding UTF8) | Select-Object -Last $count) -join ' / '
 }
 
 function Shot([IntPtr]$hwnd) {
@@ -351,6 +386,9 @@ $configPath = Join-Path $quoteDir 'Codex\api-balance-whale\overlay.json'
 $env:LOCALAPPDATA = $quoteDir
 $env:CODEX_HOME = Join-Path $quoteDir 'codex'
 New-Item -ItemType Directory -Force -Path $env:CODEX_HOME | Out-Null
+# Every stage starts from a clean process: a whale left over from the turn notice
+# checks would otherwise answer these clicks with its own config.
+Stop-Overlay
 $quoteHwnd = Start-Overlay
 Start-Sleep -Seconds 2
 Click-Client $quoteHwnd $whaleX $whaleX
@@ -361,7 +399,11 @@ $quoteShot = Shot $quoteHwnd
 $quotePixels = BubblePixels $quoteShot; Save-Shot $quoteShot 'shot-quotes.png'; $quoteShot.Bitmap.Dispose()
 $quoteLog = Get-Content -LiteralPath $log -Raw -Encoding UTF8
 $pick = ([regex]'quote pick=\d+ of 2 weight=\d+ text=QA QUOTE \w+').Match($quoteLog)
-Check 'config quote set drives the line bubble' ($pick.Success -and $quotePixels -gt $VISIBLE) ("pixels=$quotePixels log=" + $pick.Value)
+$pickDetail = "pixels=$quotePixels log=" + $pick.Value
+if (-not $pick.Success) {
+  $pickDetail += " pids=" + (@(Get-Process api-balance-whale -ErrorAction SilentlyContinue | ForEach-Object { $_.Id }) -join ',') + " tail=" + (Log-Tail)
+}
+Check 'config quote set drives the line bubble' ($pick.Success -and $quotePixels -gt $VISIBLE) $pickDetail
 
 # A drag rewrites overlay.json; the quote set has to survive that write path.
 $lp = [IntPtr](($whaleX -shl 16) -bor $whaleX)
@@ -419,6 +461,13 @@ if ($editorWnd -ne [IntPtr]::Zero) {
   Check 'quote editor is laid out' (($rect.Right - $rect.Left) -ge 440 -and ($rect.Bottom - $rect.Top) -ge 340) "size=$(($rect.Right - $rect.Left))x$(($rect.Bottom - $rect.Top))"
   $edit = [Win]::FindWindowEx($editorWnd, [IntPtr]::Zero, 'Edit', $null)
   Check 'quote editor shows the current set' ($edit -ne [IntPtr]::Zero) "edit=$edit"
+  # Two statics: the weight hint and the placeholder list. GetWindowText does read
+  # the text of a Static in another process (unlike an Edit), so the wording is
+  # asserted directly.
+  $children = [Win]::ChildWindows($editorWnd)
+  $statics = @($children | Where-Object { $_ -like 'Static*' })
+  $tokenHint = @($statics | Where-Object { $_ -like '*{p5h}*' -and $_ -like '*{date}*' })
+  Check 'quote editor lists the placeholders' ($statics.Count -ge 2 -and $tokenHint.Count -ge 1) ("statics=" + $statics.Count + " tokenHint=" + $tokenHint.Count)
   if ($edit -ne [IntPtr]::Zero) {
     $text = [System.Runtime.InteropServices.Marshal]::StringToHGlobalUni("5|QA EDITOR LINE`r`n1|QA EDITOR SECOND")
     [void][Win]::SendMessage($edit, 0x000C, [IntPtr]::Zero, $text)
@@ -434,9 +483,48 @@ if ($editorWnd -ne [IntPtr]::Zero) {
     Click-Client $quoteHwnd $bubbleX $bubbleY
     Start-Sleep -Milliseconds 1200
     $reloaded = ([regex]'text=QA EDITOR \w+').Match((Get-Content -LiteralPath $log -Raw -Encoding UTF8))
-    Check 'overlay reloads the edited set' $reloaded.Success $reloaded.Value
+    $reloadDetail = $reloaded.Value
+    if (-not $reloaded.Success) { $reloadDetail = 'tail=' + (Log-Tail) }
+    Check 'overlay reloads the edited set' $reloaded.Success $reloadDetail
   }
 }
+# ---------------------------------------------------------------- stage 5
+# Placeholders inside a random line are filled in from the live snapshot when the
+# line is drawn (upstream `bubbleContentTokenMap`); a placeholder this build does
+# not know stays verbatim so an imported upstream line still reads as text.
+Stop-Overlay
+$tokenDir = Join-Path $artifacts 'tokens'
+Remove-Item $tokenDir -Recurse -Force -ErrorAction SilentlyContinue
+Write-Config $tokenDir '{"size":440,"sound":0,"soundSet":0,"hideSeconds":30,"turnSeconds":6,"autoClose":1,"turnNotice":0,"quotes":[{"t":"QA TOKEN {p5h}/{week}","w":1},{"t":"QA KEEP {balance_api}","w":1}]}'
+$env:LOCALAPPDATA = $tokenDir
+$env:CODEX_HOME = Join-Path $tokenDir 'codex'
+$seedDir = Join-Path $env:CODEX_HOME 'sessions\2026\09\21'
+New-Item -ItemType Directory -Force -Path $seedDir | Out-Null
+Set-Content -Encoding ASCII -Path (Join-Path $seedDir 'rollout.jsonl') -Value @(
+  '{"type":"session_meta","timestamp":"2026-09-21T01:00:00Z","payload":{"model":"gpt-5.6-terra"}}',
+  '{"type":"event_msg","timestamp":"2026-09-21T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20}},"rate_limits":{"primary":{"used_percent":13,"resets_at":1789707891},"secondary":{"used_percent":55,"resets_at":1789805325}}}}'
+)
+$tokenHwnd = Start-Overlay
+Start-Sleep -Seconds 2
+Click-Client $tokenHwnd $whaleX $whaleX
+Start-Sleep -Milliseconds 700
+Click-Client $tokenHwnd $bubbleX $bubbleY
+Start-Sleep -Milliseconds 1200
+# A line bubble hides on the second click, so the other line needs the whale click
+# again; the pick avoids the line just shown, which is how both get covered. The
+# assertions below match on the line text, not on which one comes first.
+Click-Client $tokenHwnd $bubbleX $bubbleY
+Start-Sleep -Milliseconds 600
+Click-Client $tokenHwnd $whaleX $whaleX
+Start-Sleep -Milliseconds 700
+Click-Client $tokenHwnd $bubbleX $bubbleY
+Start-Sleep -Milliseconds 1200
+$tokenLog = Get-Content -LiteralPath $log -Raw -Encoding UTF8
+$expanded = ([regex]'quote pick=\d+ of 2 weight=1 text=QA TOKEN [^\r\n]*').Match($tokenLog)
+Check 'random line expands its placeholders' ($expanded.Success -and $expanded.Value -match 'text=QA TOKEN 13%/55%' -and $expanded.Value -match 'tpl=QA TOKEN \{p5h\}/\{week\}') $expanded.Value
+$verbatim = ([regex]'quote pick=\d+ of 2 weight=1 text=QA KEEP [^\r\n]*').Match($tokenLog)
+Check 'unknown placeholders stay verbatim' ($verbatim.Success -and $verbatim.Value -match 'text=QA KEEP \{balance_api\}' -and $verbatim.Value -notmatch 'tpl=') $verbatim.Value
+
 Stop-Overlay
 Remove-Item Env:\LOCALAPPDATA, Env:\CODEX_HOME -ErrorAction SilentlyContinue
 

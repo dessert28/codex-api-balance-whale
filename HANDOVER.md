@@ -69,10 +69,11 @@ native 目录：
 | `main.cpp` | 入口与五种模式分发（`--supervisor` / `--overlay` / `--settings` / `--quotes` / `--mcp`）、DPI 声明、MCP 工具实现 |
 | `overlay\desktop_overlay.cpp` | 悬浮层：分层窗口、GDI+ 逐像素 Alpha、气泡绘制、拖拽吸附、托盘、音效、单实例 |
 | `settings\settings_window.cpp` | 原生设置窗口（GDI+ 自绘，无 WinUI） |
-| `settings\quote_editor.cpp` | 随机语句编辑器（`--quotes`）：加权语句集合的多行编辑、保存与热重载通知 |
+| `settings\quote_editor.cpp` | 随机语句编辑器（`--quotes`）：加权语句集合的多行编辑、占位符清单提示、保存与热重载通知 |
 | `core\usage_snapshot.cpp` | 只读 `%CODEX_HOME%\sessions` + `archived_sessions`，算配额与 token |
 | `core\usage_monitor.cpp` | 每轮新增 token 的去重与提示 |
-| `core\quotes.cpp` | 随机语句：`quotes` 的 JSON 读写、`权重\|文本` 解析、按权重抽取并避开上一条 |
+| `core\quotes.cpp` | 随机语句：`quotes` 的 JSON 读写（读的时候跳过字符串里的花括号，正文带 `{p5h}` 也能解析）、`权重\|文本` 解析、按权重抽取并避开上一条 |
+| `core\bubble_tokens.cpp` | 随机语句的占位符：十个令牌（`{p5h}` / `{week}` / `{reset5h}` / `{resetweek}` / `{turn}` / `{today}` / `{tokens7d}` / `{model}` / `{date}` / `{time}`）的取值与替换，对齐上游 `bubbleContentTokenMap` |
 | `core\task_end.cpp` | 每轮提示音：`taskEnd` 的 JSON 读写、上游 `preset:<组>:<按下\|松开>` 的解析与轮换 |
 | `core\json_span.cpp` | 通用 JSON 取值区间查找与替换，给「多个写入方共用一个配置文件」兜底 |
 | `core\audio.cpp` | MCI 播放 mp3（`D1/D2` 原版、`Ya1/Ya2` 小黄鸭）；`PlayPress` / `PlayRelease` 返回是否真的播上 |
@@ -80,7 +81,7 @@ native 目录：
 | `core\bubble_policy.hpp` | 每类气泡的收起时长策略：配额 10 秒、普通气泡 `hideSeconds`、每轮提示 `turnSeconds`，`autoClose=0` 表示常驻 |
 | `core\session_watcher.cpp` | `ReadDirectoryChangesW` 递归监听 `sessions` 目录（去抖 1.5 秒），日志一写完就让悬浮层重算，每轮提示因此能在约 2 秒内出现 |
 | `core\supervisor.hpp` | supervisor 与悬浮层共用的“完全退出”事件名 |
-| `native\tests\*.cpp` | 使用快照、轮次监控、气泡时长、目录监听与随机语句的单元测试（见第 6 节命令） |
+| `native\tests\*.cpp` | 使用快照、轮次监控、气泡时长、目录监听、随机语句与占位符的单元测试（见第 6 节命令） |
 
 ## 4. 运行时数据与配置位置
 
@@ -95,13 +96,14 @@ native 目录：
 | “完全退出”事件 | 命名事件 `Local\ApiBalanceWhaleSupervisorStop`（悬浮层置位，supervisor 收到后一起退出） |
 | 旧版 Electron 残留 | `%USERPROFILE%\.codex\whale-widget`（`WhaleLauncher-*.exe` + `desktop-runtime` + `ledgers`）：0.2.0 时代那次安装留下的启动器与数据，原生版不使用；`status.ps1` 负责报出来，`stop.ps1` / `uninstall.ps1` 能结束它的进程 |
 
-设置项含义：`size` 悬浮层边长（物理像素，200–900）、`sound` 点击音效开关、`soundSet` 0 原版 / 1 小黄鸭、`hideSeconds` 随机语句收起秒数（默认 5，范围 3–120）、`turnSeconds` 每轮提示收起秒数（默认 6，对齐上游 `ttlSec`）、`autoClose` 0 = 不自动收起、`turnNotice` 0 = 关闭每轮提示、`taskEnd` 是每轮提示音（`{"on":0|1,"sel":"preset:<duck|fx1>:<press|release>"}`，与上游 `usageSet.taskEnd` 同形，默认 `on:0`）、`quotes` 是加权随机语句数组（`[{"t":"文本","w":权重}]`，缺省或为空时回落到内置 10 条）。
+设置项含义：`size` 悬浮层边长（物理像素，200–900）、`sound` 点击音效开关、`soundSet` 0 原版 / 1 小黄鸭、`hideSeconds` 随机语句收起秒数（默认 5，范围 3–120）、`turnSeconds` 每轮提示收起秒数（默认 6，对齐上游 `ttlSec`）、`autoClose` 0 = 不自动收起、`turnNotice` 0 = 关闭每轮提示、`taskEnd` 是每轮提示音（`{"on":0|1,"sel":"preset:<duck|fx1>:<press|release>"}`，与上游 `usageSet.taskEnd` 同形，默认 `on:0`）、`quotes` 是加权随机语句数组（`[{"t":"文本","w":权重}]`，`t` 里可以写 `{p5h}` 之类的占位符，缺省或为空时回落到内置 10 条）。
 
 ## 5. 交互与行为（当前实现）
 
 - 点鲸鱼：显示 5 小时 / 本周配额两行，10 秒后自动收起；再点鲸鱼只重新计时、不换内容（对齐上游 `showCodexQuotaOnClick`）。
 - 点气泡：把配额卡片换成随机语句（随机语句按 `hideSeconds` 收起）；再点随机语句或右键即收起（对齐上游 `showRandomBubbleAfterQuota` / `bubbleNext`）。语句按 `w` 加权随机，并最多重试 6 次避开上一条（对齐上游 `bubblePickLine` 的 `avoidIdx`）。
-- 随机语句可编辑：托盘「随机语句…」或 `--quotes` 打开编辑器，一行一条 `权重|文本`（省略权重即 1，范围 1–99，空行忽略，非数字前缀时 `|` 算正文）；保存只替换 `quotes` 字段，随后通知悬浮层热重载。
+- 随机语句可编辑：托盘「随机语句…」或 `--quotes` 打开编辑器，一行一条 `权重|文本`（省略权重即 1，范围 1–99，空行忽略，非数字前缀时 `|` 算正文）；保存只替换 `quotes` 字段，随后通知悬浮层热重载。编辑器第二行列出可用占位符。
+- 随机语句里的占位符（对齐上游 `bubbleContentTokenMap`）：`{p5h}` / `{week}` 是 5 小时与本周已用百分比，`{reset5h}` / `{resetweek}` 是重置倒计时（`2小时13分钟` / `3天4小时`），`{turn}` 是上一轮 token、`{today}` / `{tokens7d}` 是今日与近 7 天 token，另有 `{model}` / `{date}` / `{time}`。只有气泡真正显示时才替换，读不到的给 `--`，不认识的占位符（例如上游的 `{balance_api}`）原样保留；替换按名字从长到短做，与上游同一个顺序。
 - 每轮 Codex 对话结束提示一次「模型 + 本轮 token + 两行配额」，按 `turnSeconds` 收起；`turnNotice=0` 时完全不弹。日志写入后约 1.5–2 秒弹出（目录监听 + 1.5 秒去抖），5 秒轮询只作兜底。
 - 每轮提示音（对齐上游 `usageSet.taskEnd = {on, sel}`）：本轮对话一被监控到就先按 `sel` 播放，再决定要不要弹提示气泡；`sel` 是 `preset:<duck|fx1>:<press|release>`（小黄鸭 `duck` → `Ya1/Ya2`，音效1 `fx1` → `D1/D2`），空值或上游的 `grp:` / `frag:` 会回落到默认的 `preset:duck:press`；`taskEnd.on` 与全局“音效”任一关闭就不响。托盘“每轮提示音”是开关，“提示音：…”点一下换下一个预设；设置窗口里也能改这两项。
 - 全局快捷键默认 `Ctrl+Alt+W` 显示/收起配额卡片；注册失败（被别的程序占用）自动改用 `Ctrl+Shift+W`，托盘首项显示实际绑定。
@@ -136,11 +138,12 @@ cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /st
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\usage_monitor_tests.cpp native\core\usage_snapshot.cpp native\core\usage_monitor.cpp /Fe:native\tests\usage_monitor_tests.exe && native\tests\usage_monitor_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_policy_tests.cpp /Fe:native\tests\bubble_policy_tests.exe && native\tests\bubble_policy_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\session_watcher_tests.cpp native\core\session_watcher.cpp /Fe:native\tests\session_watcher_tests.exe && native\tests\session_watcher_tests.exe"
-cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\quote_tests.cpp native\core\quotes.cpp /Fe:native\tests\quote_tests.exe && native\tests\quote_tests.exe"
+cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\quote_tests.cpp native\core\quotes.cpp native\core\json_span.cpp /Fe:native\tests\quote_tests.exe && native\tests\quote_tests.exe"
 cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\task_end_tests.cpp native\core\task_end.cpp native\core\json_span.cpp /Fe:native\tests\task_end_tests.exe && native\tests\task_end_tests.exe"
+cmd /d /c "call <VS2022>\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_token_tests.cpp native\core\bubble_tokens.cpp /Fe:native\tests\bubble_token_tests.exe && native\tests\bubble_token_tests.exe"
 
 # 端到端回归（需要先编译 Release；截图与临时日志落在 qa-output\，不入库）
-powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 33 项：交互、气泡时长、托盘、每轮提示延迟、每轮提示音、随机语句与编辑器
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 36 项：交互、气泡时长、托盘、每轮提示延迟、每轮提示音、随机语句（含占位符）与编辑器
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-supervisor.ps1  # 7 项：托管与两种退出
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-live.ps1        # 4 项：真实会话目录下的启动、待机 CPU、干净退出
 
@@ -211,6 +214,16 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 - 新增 `legacy-install.ps1`：探测旧版 Electron 安装（计划任务动作是否指向 `WhaleLauncher-*.exe`、`launcher-state.json` 里的托管脚本是否还存在、启动器 / supervisor / Electron 进程、旧数据目录），并按进程树结束它。`status.ps1` 末尾会打印残留清单，`stop.ps1` 新增 `-WhatIf`（实测只列 8 个进程、不结束），`install.ps1` 切换任务动作时给出提示，`uninstall.ps1` 也会顺手收掉旧进程。
 - `status.ps1` 读 `overlay.json` 补上 `-Encoding UTF8`（原先打印配置是乱码）。
 
+第七轮（本次改动，`qa\verify-parity.ps1` 36 项 + `verify-supervisor.ps1` 7 项 + `verify-live.ps1` 4 项 + 7 个单元测试，全部 PASS）：
+
+- 随机语句支持动态占位符，对齐上游 `bubbleContentTokenMap`：新增 `core\bubble_tokens.cpp`（十个令牌的取值 + 「按名字从长到短」的替换），悬浮层在真正绘制前展开，语句编辑器第二行印出可用占位符。
+- 顺带修掉一个真 bug：`ParseQuoteJson` 原来用朴素的 `find('{')` / `find('}')` 找对象边界，正文里带占位符（`{p5h}`、上游默认的 `{balance_api}`）会把对象从 `{p5h}` 处截断，整份 `quotes` 解析成空并静默回落到内置 10 条。现在边界只在字符串之外找，`quote_tests.cpp` 增加了花括号用例。
+- 脚本实测：配置 `[{"t":"QA TOKEN {p5h}/{week}","w":1},{"t":"QA KEEP {balance_api}","w":1}]` 加一份伪造会话（13% / 55%），日志出现 `quote pick=0 of 2 weight=1 text=QA TOKEN 13%/55% tpl=QA TOKEN {p5h}/{week}`；另一条是 `text=QA KEEP {balance_api}` 且不带 `tpl=`，说明不认识的占位符原样保留。
+- 编辑器两条提示行也被断言：枚举子窗口拿到两个 `Static`，其中一条的文本包含 `{p5h}` 与 `{date}`（`FindWindowEx` 在这台机器上匹配不到 `Static` 子窗口，改用 `EnumChildWindows`）。
+- 新增 `native\tests\bubble_token_tests.cpp`：十个令牌的取值、缺数据给 `--`、倒计时与日期格式、替换（相邻 / 重复 / 未知 / 大小写 / 单花括号 / 嵌套 / 自引用不死循环）、编辑器清单文本。
+- 修掉回归脚本的一个竞态：`Stop-Overlay` 原来只 `Stop-Process -Force` 再固定等 500 毫秒，而正在退出的旧挂件还占着单实例互斥量，下一次 `Start-Overlay` 会把**旧窗口**交回来——点它用的是旧配置。上一轮就是这样把 stage 4 的两项判成失败（现象 `pixels=0 log=`，且拖拽回写的配置里没有 `x`/`y`，说明点击根本没落到新进程）。现在轮询等进程真正消失、只接受本次启动的 PID 的窗口，失败时还会打印 `pids=` 与日志尾部。
+- Release x64 编译无错误无警告。
+
 ## 8. 尚未实现 / 与上游原版差异
 
 功能缺口（上游有、这里没有）：
@@ -225,7 +238,7 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 
 1. 每轮提示内容：上游显示本轮 API 扣费金额（含 pending/unknown/失败中性文案），这里显示模型 + 本轮 token。
 2. 气泡内容：上游气泡可放任意模块（文字大小/颜色/图片/GIF 混排），这里只有「两行配额」或「一行随机语句」。
-3. 随机语句：这里已经是可编辑的加权集合（权重与热重载都对上了），但只有纯文本；上游的集合里还有峰谷提示、今日已用、GIF、卖萌吐槽这些动态条目。
+3. 随机语句：可编辑的加权集合与占位符机制都对齐了，差别在令牌集合——上游取的是余额/今日花费（`{balance_api}`、`{expense_api}`），这里取配额与 token（`{p5h}`、`{week}`、`{turn}`…），因为原生版没有账本；上游集合里还有峰谷提示、GIF、卖萌吐槽这些动态条目，这里没有。
 4. 气泡内文字大小：上游用固定字号（`dshwv-label` 66 单位等），这里按气泡内可用宽度自动收缩。
 5. 每轮提示延迟：上游用 `fs.watch` 秒级反应；这里改成 `ReadDirectoryChangesW` 监听 + 1.5 秒去抖，实测约 1.6 秒，已对齐。
 6. 手感：上游气泡是 DOM 弹性动画（`cubic-bezier` 缩放淡入），这里分层窗口直接贴位，没有入场动画。
@@ -253,9 +266,13 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 15. **Windows PowerShell 5.1 按 ANSI 解码没有 BOM 的 `.ps1`**：本机代码页 936，脚本里的中文字面量会被解成乱码，字面量末尾的字节还可能把引号一起吃掉、直接变成语法错误（本轮实跑 `status.ps1` 报 `Unexpected token`）。带中文的 `.ps1` 必须存成 UTF-8 with BOM（前三个字节 `EF BB BF`）；`qa\verify-*.ps1` 一直有 BOM 所以没事，`install.ps1` / `status.ps1` / `uninstall.ps1` 是本轮补上的。所以 `.cmd` 包装器一律用 `powershell.exe -File` 跑这些脚本，别用 `Get-Content` 拼字符串再 `Invoke-Expression`。
 16. **旧版 Electron 安装与原生版共用计划任务名**：`Codex API Balance Whale` 可能仍指向 `WhaleLauncher-*.exe` 与早已删掉的 `desktop\supervisor.ps1`，于是「任务在跑、`api-balance-whale` 却没进程、桌面上却有鲸鱼」。`install.ps1` 只会替换任务动作、不会停旧进程，正确顺序是 `.\stop.ps1` → `.\install.ps1`；`status.ps1` 会把这种残留报出来。
 
+17. **`quotes` 的 JSON 读取必须跳过字符串里的花括号**：随机语句正文本身就带 `{p5h}` 这类占位符，用 `find('{')` / `find('}')` 找对象边界会在占位符处截断对象，整份数组解析为空并静默回落到内置语句（现象是「配了自定义语句却一直显示默认句子」）。`quotes.cpp` 的 `FindOutsideString` 只在字符串之外找边界；改这类解析器时先想清楚字符串与转义。
+18. **`FindWindowEx` 在这台机器上匹配不到编辑器的 `Static` 子窗口**（`Edit` 能匹配到），枚举子窗口要用 `EnumChildWindows`；另外 `GetWindowText` 能跨进程读到 `Static` / `Button` 的文本，但读不到 `Edit` 的（见第 13 条）。
+19. **`Stop-Process` 返回不代表进程已经退出，而挂件的单实例互斥量还在**：紧接着 `Start-Process` 拉起的新挂件会因为 `ERROR_ALREADY_EXISTS` 自己退出，旧窗口照样响应点击、用的是旧配置，脚本于是「假装通过」（第 12 条那个 `SW_HIDE` 是另一回事）。要轮询等进程真正消失再启动，并且只认本次启动的 PID——回归脚本已按此改。
+
 ## 10. 建议的下一步（按性价比）
 
 1. 快捷键做成可配置（并同步显示在设置窗口里，现在设置窗口只写了默认值）。
 2. 余额/账本（`whale_balance`、多服务商、汇率、每轮费用）——工作量大，先定存储格式。
 3. 素材库与多角色、气泡样式编辑器。
-4. 随机语句支持动态占位符（上游 `bubbleContentTokenMap` 的 `{balance_api}` 之类），现在只有纯文本。
+4. 占位符目前只用在随机语句上：上游的占位符还能进余额 / 今日模块的模板，这里可以把每轮提示的文案也做成可编辑模板。

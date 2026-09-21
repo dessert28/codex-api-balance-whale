@@ -158,6 +158,30 @@ int NumberAfter(const std::string& object, const char* key, int fallback) {
 
 int ClampWeight(int weight) { return std::clamp(weight, 1, kMaxQuoteWeight); }
 
+// Finds `wanted` after `from`, skipping everything inside JSON strings, so a line
+// whose text contains braces (the upstream default is `{balance_api}`) cannot be
+// mistaken for object structure.
+std::size_t FindOutsideString(const std::string& text, char wanted, std::size_t from, std::size_t limit) {
+    bool inString = false;
+    for (std::size_t index = from; index < limit && index < text.size(); ++index) {
+        const char ch = text[index];
+        if (inString) {
+            if (ch == '\\') {
+                ++index;
+            } else if (ch == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            inString = true;
+        } else if (ch == wanted) {
+            return index;
+        }
+    }
+    return std::string::npos;
+}
+
 } // namespace
 
 std::vector<QuoteLine> DefaultQuotes() {
@@ -233,10 +257,10 @@ std::vector<QuoteLine> ParseQuoteJson(const std::string& configText) {
     if (!FindQuoteSpan(configText, begin, end)) return lines;
     std::size_t index = begin + 1;
     while (index < end) {
-        const auto open = configText.find('{', index);
-        if (open == std::string::npos || open >= end) break;
-        const auto close = configText.find('}', open + 1);
-        if (close == std::string::npos || close > end) break;
+        const auto open = FindOutsideString(configText, '{', index, end);
+        if (open == std::string::npos) break;
+        const auto close = FindOutsideString(configText, '}', open + 1, end);
+        if (close == std::string::npos) break;
         const auto object = configText.substr(open + 1, close - open - 1);
         index = close + 1;
         const auto keyAt = object.find("\"t\"");

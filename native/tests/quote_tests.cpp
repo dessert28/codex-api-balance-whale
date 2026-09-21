@@ -33,6 +33,23 @@ int main() {
     // A config without quotes yields nothing; SetQuoteJson appends the array and
     // keeps the keys around it.
     assert(whale::ParseQuoteJson("{\"size\":440}").empty());
+    // Braces inside a line's text - the upstream placeholders - must not be read as
+    // object structure: a naive scan for '{' / '}' stopped the object at `{p5h}` and
+    // the whole set came back empty (which silently fell back to the built-in lines).
+    const std::string braceConfig =
+        "{\"size\":440,\"quotes\":[{\"t\":\"5h={p5h} {week}\",\"w\":3},{\"t\":\"余额 {balance_api}\",\"w\":1}],\"turnNotice\":1}";
+    const auto braceLines = whale::ParseQuoteJson(braceConfig);
+    assert(braceLines.size() == 2);
+    assert(braceLines[0].text == L"5h={p5h} {week}" && braceLines[0].weight == 3);
+    assert(braceLines[1].text == L"余额 {balance_api}" && braceLines[1].weight == 1);
+    std::size_t braceBegin = 0;
+    std::size_t braceEnd = 0;
+    assert(whale::FindQuoteSpan(braceConfig, braceBegin, braceEnd));
+    assert(braceConfig.substr(braceBegin, braceEnd - braceBegin) ==
+           "[{\"t\":\"5h={p5h} {week}\",\"w\":3},{\"t\":\"余额 {balance_api}\",\"w\":1}]");
+    // A rewrite through the span-preserving writer keeps them too.
+    assert(whale::ParseQuoteJson(whale::SetQuoteJson(braceConfig, braceLines)).size() == 2);
+
     const auto appended = whale::SetQuoteJson("{\"size\":440}\n", std::vector<whale::QuoteLine>{{L"句子", 4}});
     assert(appended.find("\"size\":440") != std::string::npos);
     const auto appendedLines = whale::ParseQuoteJson(appended);

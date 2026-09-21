@@ -9,6 +9,7 @@
 - 点击鲸鱼：显示 `5 小时` 与 `本周` 使用率及重置倒计时，固定 10 秒后自动收起；没有配额数据时显示“暂无数据”，使用缓存时标注“上次数据”。再点鲸鱼只会重新计时，不会切换内容。
 - 点击气泡：配额卡片换成随机语句（按权重抽取、尽量不重复上一条；按“气泡时长”收起，默认 5 秒）；再点随机语句、或右键，收起气泡。
 - 随机语句可编辑：托盘“随机语句…”或 `--quotes` 打开编辑器，每行写成 `权重|文本`（省略权重即 1，范围 1–99），保存后写回 `overlay.json` 并让悬浮层立即重载；“恢复默认”可取回内置的 10 条句子。
+- 语句支持占位符（对齐上游 `bubbleContentTokenMap` 的写法）：`{p5h}` / `{week}` 是 5 小时与本周已用百分比，`{reset5h}` / `{resetweek}` 是重置倒计时，`{turn}` 是上一轮 token，`{today}` / `{tokens7d}` 是今日与近 7 天 token，另有 `{model}`、`{date}`、`{time}`。气泡显示时才替换成实时数值，读不到的显示 `--`，不认识的占位符（例如上游的 `{balance_api}`）原样保留；这份清单也印在语句编辑器里。
 - 点击音效：原版（`D1/D2.mp3`）或小黄鸭（`Ya1/Ya2.mp3`），可开关。
 - 每轮提示音：对齐上游 `usageSet.taskEnd = {on, sel}`——本轮对话结束后播放提示音，可在托盘/设置里开关，并在 `preset:<组>:<按下|松开>` 里选（小黄鸭 `duck` 用 `Ya1/Ya2`，音效1 `fx1` 用 `D1/D2`）；受全局“音效”开关约束，`sel` 为空或无法识别时回落到上游默认的 `preset:duck:press`。
 - 全局快捷键：`Ctrl+Alt+W` 显示/收起配额卡片；若已被其它程序占用会自动改用 `Ctrl+Shift+W`，托盘首项显示实际生效的组合。
@@ -69,10 +70,11 @@ cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat 
 cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\usage_monitor_tests.cpp native\core\usage_snapshot.cpp native\core\usage_monitor.cpp /Fe:native\tests\usage_monitor_tests.exe && native\tests\usage_monitor_tests.exe"
 cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_policy_tests.cpp /Fe:native\tests\bubble_policy_tests.exe && native\tests\bubble_policy_tests.exe"
 cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\session_watcher_tests.cpp native\core\session_watcher.cpp /Fe:native\tests\session_watcher_tests.exe && native\tests\session_watcher_tests.exe"
-cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\quote_tests.cpp native\core\quotes.cpp /Fe:native\tests\quote_tests.exe && native\tests\quote_tests.exe"
+cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\quote_tests.cpp native\core\quotes.cpp native\core\json_span.cpp /Fe:native\tests\quote_tests.exe && native\tests\quote_tests.exe"
 cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\task_end_tests.cpp native\core\task_end.cpp native\core\json_span.cpp /Fe:native\tests\task_end_tests.exe && native\tests\task_end_tests.exe"
+cmd /d /c "call D:\software\VisualStudio\vs2022\VC\Auxiliary\Build\vcvars64.bat > nul && cl /nologo /std:c++17 /EHsc /utf-8 /I native\core native\tests\bubble_token_tests.cpp native\core\bubble_tokens.cpp /Fe:native\tests\bubble_token_tests.exe && native\tests\bubble_token_tests.exe"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 33 项：交互、气泡时长、托盘、每轮提示延迟、每轮提示音、随机语句与编辑器
+powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-parity.ps1      # 36 项：交互、气泡时长、托盘、每轮提示延迟、每轮提示音、随机语句（含占位符）与编辑器
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-supervisor.ps1  # 7 项：托管与两种退出
 powershell -NoProfile -ExecutionPolicy Bypass -File qa\verify-live.ps1        # 4 项：真实会话目录下的启动、待机 CPU、干净退出
 ```
