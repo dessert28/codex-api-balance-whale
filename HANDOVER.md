@@ -43,6 +43,8 @@ codex plugin add api-balance-whale@personal
 
 注意：`native\bin\` 与 `native\obj\` 在 `.gitignore` 里，不会随仓库走；换机器后第一次编译会重新生成中间文件（较慢，属正常）。
 
+如果这台机器装过 0.2.0 的 Electron 版，`.\status.ps1` 会报出旧版残留（计划任务仍指向 `WhaleLauncher-*.exe`）；先 `.\stop.ps1` 再 `.\install.ps1` 即可切到原生版，`%USERPROFILE%\.codex\whale-widget` 里的旧数据不会被动。
+
 ## 3. 目录结构
 
 ```
@@ -55,6 +57,7 @@ api-balance-whale\
 ├─ skills\api-balance-whale\SKILL.md  给 Codex 用的技能说明（原生口径）
 ├─ qa-output\                    验证截图（不入库）
 ├─ install.ps1 / uninstall.ps1 / start.ps1 / stop.ps1 / status.ps1
+├─ legacy-install.ps1            旧版 Electron 安装残留的探测与停止（status / stop / install / uninstall 共用）
 ├─ 安装桌面组件.cmd / 启动桌面挂件.cmd / 停止挂件服务.cmd
 └─ HANDOVER.md                   本文件
 ```
@@ -90,6 +93,7 @@ native 目录：
 | 登录自启（托盘/设置） | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `ApiBalanceWhale` |
 | 单实例互斥量 | `Local\ApiBalanceWhaleOverlayInstance`、`Local\ApiBalanceWhaleSupervisorInstance` |
 | “完全退出”事件 | 命名事件 `Local\ApiBalanceWhaleSupervisorStop`（悬浮层置位，supervisor 收到后一起退出） |
+| 旧版 Electron 残留 | `%USERPROFILE%\.codex\whale-widget`（`WhaleLauncher-*.exe` + `desktop-runtime` + `ledgers`）：0.2.0 时代那次安装留下的启动器与数据，原生版不使用；`status.ps1` 负责报出来，`stop.ps1` / `uninstall.ps1` 能结束它的进程 |
 
 设置项含义：`size` 悬浮层边长（物理像素，200–900）、`sound` 点击音效开关、`soundSet` 0 原版 / 1 小黄鸭、`hideSeconds` 随机语句收起秒数（默认 5，范围 3–120）、`turnSeconds` 每轮提示收起秒数（默认 6，对齐上游 `ttlSec`）、`autoClose` 0 = 不自动收起、`turnNotice` 0 = 关闭每轮提示、`taskEnd` 是每轮提示音（`{"on":0|1,"sel":"preset:<duck|fx1>:<press|release>"}`，与上游 `usageSet.taskEnd` 同形，默认 `on:0`）、`quotes` 是加权随机语句数组（`[{"t":"文本","w":权重}]`，缺省或为空时回落到内置 10 条）。
 
@@ -114,7 +118,9 @@ native 目录：
 # 工程已带 /utf-8（源码是 UTF-8，代码页 936 的机器上不加 /utf-8 会把中文字面量编坏）
 
 # 启停与状态
-.\start.ps1 ; .\status.ps1 ; .\stop.ps1 ; .\install.ps1 ; .\uninstall.ps1
+.\start.ps1 ; .\status.ps1 ; .\install.ps1 ; .\uninstall.ps1
+.\stop.ps1                     # 结束悬浮层与 supervisor
+.\stop.ps1 -WhatIf             # 只列会被结束的进程（含旧版 Electron 残留），不动手
 
 # 直接运行各模式
 .\native\bin\Release\api-balance-whale.exe --overlay
@@ -199,6 +205,12 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 - 顺手修掉：`qa\verify-parity.ps1` 读调试日志没带 `-Encoding UTF8`，中文标签在 PowerShell 5.1 下被按 GBK 解成乱码（日志文件本身是对的）。
 - Release x64 编译无错误无警告。
 
+第六轮（脚本健壮性，本机实测发现的两个真问题）：
+
+- `install.ps1` / `status.ps1` / `uninstall.ps1` 之前是**无 BOM** 的 UTF-8：Windows PowerShell 5.1 按本机代码页 936 解码脚本，中文字面量变成乱码，末尾字节还会吃掉引号直接报 `Unexpected token`（实跑 `status.ps1` 复现）。三个脚本与新增的 `legacy-install.ps1` / `stop.ps1` 现在都是 UTF-8 with BOM，`Parser::ParseFile` 全部 0 错误。
+- 新增 `legacy-install.ps1`：探测旧版 Electron 安装（计划任务动作是否指向 `WhaleLauncher-*.exe`、`launcher-state.json` 里的托管脚本是否还存在、启动器 / supervisor / Electron 进程、旧数据目录），并按进程树结束它。`status.ps1` 末尾会打印残留清单，`stop.ps1` 新增 `-WhatIf`（实测只列 8 个进程、不结束），`install.ps1` 切换任务动作时给出提示，`uninstall.ps1` 也会顺手收掉旧进程。
+- `status.ps1` 读 `overlay.json` 补上 `-Encoding UTF8`（原先打印配置是乱码）。
+
 ## 8. 尚未实现 / 与上游原版差异
 
 功能缺口（上游有、这里没有）：
@@ -237,6 +249,9 @@ python <plugin-creator skill>\scripts\validate_plugin.py .
 12. **`Start-Process -WindowStyle Hidden` 会吃掉窗口的第一次 `ShowWindow`**：`STARTUPINFO.wShowWindow = SW_HIDE` 一旦生效，程序之后自己调 `ShowWindow(SW_SHOW)` 也救不回来，窗口永远不可见、`MainWindowHandle` 一直是 0。测 `--quotes` 编辑器时踩到过（`verify-parity.ps1` 里那行已经去掉 `-WindowStyle Hidden`）；悬浮层不受影响，因为它用 `UpdateLayeredWindow` + `WS_VISIBLE` 建窗口。
 13. **跨进程 `SendMessage` 必须钉住 Unicode 入口**：`[DllImport("user32.dll")]` 不带 `CharSet` 会解析到 `SendMessageA`，它跨进程时按 ANSI 解释字符串指针，UTF-16 载荷在第一个 NUL 处被截断——`5|QA EDITOR LINE` 落到编辑器里只剩 `5`，保存出来就是一条 `{"t":"5","w":1}`。P/Invoke 要写 `CharSet=CharSet.Unicode, EntryPoint="SendMessageW"`。另外 `WM_GETTEXT` / `GetWindowTextLength` 跨进程读不到别的进程 Edit 的内容，别拿它做断言。
 14. **Windows PowerShell 读日志要带 `-Encoding UTF8`**：调试日志是 UTF-8（`std::ofstream` + `WideToUtf8`），但 `Get-Content` 在 PowerShell 5.1 里默认按 ANSI（本机 936）解码，中文会显示成 `灏忛粍楦锋澗寮€` 这种乱码——文件没错，是读的人错了。`qa\verify-parity.ps1` 里读日志的地方都已补上 `-Encoding UTF8`。
+
+15. **Windows PowerShell 5.1 按 ANSI 解码没有 BOM 的 `.ps1`**：本机代码页 936，脚本里的中文字面量会被解成乱码，字面量末尾的字节还可能把引号一起吃掉、直接变成语法错误（本轮实跑 `status.ps1` 报 `Unexpected token`）。带中文的 `.ps1` 必须存成 UTF-8 with BOM（前三个字节 `EF BB BF`）；`qa\verify-*.ps1` 一直有 BOM 所以没事，`install.ps1` / `status.ps1` / `uninstall.ps1` 是本轮补上的。所以 `.cmd` 包装器一律用 `powershell.exe -File` 跑这些脚本，别用 `Get-Content` 拼字符串再 `Invoke-Expression`。
+16. **旧版 Electron 安装与原生版共用计划任务名**：`Codex API Balance Whale` 可能仍指向 `WhaleLauncher-*.exe` 与早已删掉的 `desktop\supervisor.ps1`，于是「任务在跑、`api-balance-whale` 却没进程、桌面上却有鲸鱼」。`install.ps1` 只会替换任务动作、不会停旧进程，正确顺序是 `.\stop.ps1` → `.\install.ps1`；`status.ps1` 会把这种残留报出来。
 
 ## 10. 建议的下一步（按性价比）
 

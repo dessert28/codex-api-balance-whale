@@ -38,7 +38,8 @@ cd D:\project\githubclone\codex-marketplace\plugins\api-balance-whale
 ```powershell
 .\start.ps1       # 启动 supervisor；它等待 Codex 并在其运行期间托管悬浮层
 .\status.ps1      # 进程、计划任务、自启状态、当前配置
-.\stop.ps1        # 结束悬浮层与 supervisor
+.\stop.ps1 -WhatIf # 只列会被结束的进程（含旧版 Electron 残留）
+.\stop.ps1        # 结束悬浮层、supervisor 与旧版 Electron 残留
 .\install.ps1     # 注册当前用户登录计划任务并立即启动
 .\uninstall.ps1   # 移除计划任务与当前用户启动项，并结束进程
 ```
@@ -54,6 +55,8 @@ cd D:\project\githubclone\codex-marketplace\plugins\api-balance-whale
 ```
 
 开机自启只有一种生效方式：`install.ps1` 写计划任务 `Codex API Balance Whale`，托盘/设置里的“开机自启”写当前用户 Run 键 `ApiBalanceWhale`；开启其中一种会自动移除另一种，supervisor 也有单实例保护，不会出现两只鲸鱼。
+
+这台机器上如果还留着 0.2.0 时代的 Electron 安装（`WhaleLauncher-*.exe` + `desktop\supervisor.ps1`，数据目录 `%USERPROFILE%\.codex\whale-widget`），它会占着同名的计划任务，桌面上画的就还是旧版。`.\status.ps1` 会把这种残留单独报出来，`.\stop.ps1` 结束旧进程（含它的 supervisor 与 Electron 子进程），再 `.\install.ps1` 把任务改指原生 exe 就切换完成；旧数据目录不会被删。
 
 ## 数据口径与限制
 
